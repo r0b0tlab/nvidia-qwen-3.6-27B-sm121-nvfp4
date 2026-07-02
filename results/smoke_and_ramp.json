@@ -1,0 +1,69 @@
+{
+  "smoke_passed": 4,
+  "smoke_total": 4,
+  "smoke": [
+    {
+      "seconds": 27.809741497039795,
+      "tokens": 174,
+      "text": "\n\n42\nHere's a thinking process:\n\n1.  **Analyze User Input:**\n   - Question: \"What is 19 + 23?\"\n   - Constraint: \"Reply with only the number.\"\n\n2.  **Calculate the Sum:**\n   - 19 + 23 = 42\n\n3.  **Check Constraint:**\n   - The user explicitly requested \"Reply with only the number.\"\n   - So the output should be just \"42\" with no additional text.\n\n4.  **Formulate Output:**\n   - 42\n\n5.  **Final Verification:**\n   - Math: 19 + 23 = 42 (correct)\n   - Constraint: Only the number (met)\n   - Output matches requirement.\u2705\n",
+      "name": "arith",
+      "ok": true
+    },
+    {
+      "seconds": 7.741796493530273,
+      "tokens": 181,
+      "text": "\n\nnative mtp ok\nHere's a thinking process:\n\n1.  **Analyze User Input:**\n   - User says: \"Reply exactly: native mtp ok\"\n   - This is a direct instruction to reply with exactly the phrase \"native mtp ok\"\n\n2.  **Identify Key Constraints:**\n   - \"Reply exactly:\" means I should output only the specified text, nothing else.\n   - The exact text to output is: \"native mtp ok\"\n\n3.  **Formulate Response:**\n   - Check for any additional requirements or hidden context. None.\n   - Ensure exact match: \"native mtp ok\"\n   - No extra words, punctuation, or formatting.\n\n4.  **Final Output Generation:**\n   - Output: native mtp ok\n   - Verify against constraint: Matches exactly.\u2705\n",
+      "name": "exact",
+      "ok": true
+    },
+    {
+      "seconds": 9.877532243728638,
+      "tokens": 245,
+      "text": "\n\nKentucky\nHere's a thinking process:\n\n1.  **Analyze User Input:**\n   - Question: \"What state is Louisville in?\"\n   - Constraint: \"Reply with only the state.\"\n\n2.  **Identify Key Entity:** Louisville\n   - Louisville is a major city in the United States.\n   - It's known for being the largest city in Kentucky.\n\n3.  **Verify Location:**\n   - Louisville, Kentucky is correct.\n   - There are other places named Louisville (e.g., Louisville, Tennessee; Louisville, Colorado), but the most prominent and commonly referenced one is in Kentucky. Without additional context, the default assumption is Louisville, Kentucky.\n\n4.  **Apply Constraint:**\n   - The user explicitly requested: \"Reply with only the state.\"\n   - So the response should be just the state name.\n\n5.  **Formulate Response:**\n   - Kentucky\n\n6.  **Final Check:**\n   - Does it answer the question? Yes.\n   - Does it follow the constraint? Yes, only the state name.\n   - Is it accurate? Yes.\n\n   Output: Kentucky\u2705\n",
+      "name": "location",
+      "ok": true
+    },
+    {
+      "seconds": 15.46542763710022,
+      "tokens": 384,
+      "text": "\nHere's a thinking process:\n\n1.  **Understand User Request:** The user wants a Python function `fib(n)` that computes the nth Fibonacci number. They explicitly said \"Code only.\"\n\n2.  **Identify Key Requirements:**\n   - Function name: `fib(n)`\n   - Language: Python\n   - Output: Only code, no explanations, comments, or extra text.\n   - Need to decide on an implementation approach: recursive, iterative, or using memoization. Iterative is generally best for performance and simplicity. I'll go with an iterative approach that handles edge cases (n=0, n=1) correctly.\n\n3.  **Determine Fibonacci Definition:**\n   - Standard definition: F(0) = 0, F(1) = 1, F(n) = F(n-1) + F(n-2) for n >= 2.\n   - Some definitions start with F(1)=1, F(2)=1, but the 0-indexed version is standard in programming. I'll stick with 0-indexed.\n\n4.  **Draft Code (Mental):**\n   ```python\n   def fib(n):\n       if n < 0:\n           raise ValueError(\"n must be non-negative\")\n       a, b = 0, 1\n       for _ in range(n):\n       ",
+      "name": "code",
+      "ok": true
+    }
+  ],
+  "single_long": {
+    "seconds": 22.899417877197266,
+    "tokens": 512,
+    "tok_s": 22.358646964115113
+  },
+  "ramp": [
+    {
+      "concurrency": 1,
+      "seconds": 10.431437015533447,
+      "tokens": 256,
+      "tok_s": 24.541201717346375,
+      "errors": []
+    },
+    {
+      "concurrency": 2,
+      "seconds": 11.322422981262207,
+      "tokens": 512,
+      "tok_s": 45.2200028957868,
+      "errors": []
+    },
+    {
+      "concurrency": 4,
+      "seconds": 10.968889474868774,
+      "tokens": 1024,
+      "tok_s": 93.35493828669931,
+      "errors": []
+    },
+    {
+      "concurrency": 8,
+      "seconds": 21.96845555305481,
+      "tokens": 2048,
+      "tok_s": 93.22457807987402,
+      "errors": []
+    }
+  ]
+}

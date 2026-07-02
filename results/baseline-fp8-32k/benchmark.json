@@ -1,0 +1,73 @@
+{
+  "run_id": "20260702T115200-track-c-32k-fp8",
+  "utc": "2026-07-02T12:15:36.688525Z",
+  "base_url": "http://127.0.0.1:18080",
+  "model": "Qwen3.6-27B-NVFP4",
+  "max_model_len": 32768,
+  "kv_cache_dtype": "fp8",
+  "smoke": {
+    "seconds": 9.638181447982788,
+    "completion_tokens": 128,
+    "prompt_tokens": 23
+  },
+  "ramp": [
+    {
+      "concurrency": 1,
+      "requests_ok": 1,
+      "requests_error": 0,
+      "seconds": 12.941589593887329,
+      "output_tokens": 256,
+      "output_tok_s": 19.78118670375051,
+      "power_watts_mean": 33.95923076923077,
+      "power_watts_peak": 34.18,
+      "temp_c_mean": 53.76923076923077,
+      "tok_s_per_watt": 0.5824980794816332,
+      "joules_per_1k_output_tokens": 1716.7438575761537
+    },
+    {
+      "concurrency": 4,
+      "requests_ok": 4,
+      "requests_error": 0,
+      "seconds": 14.583841800689697,
+      "output_tokens": 1024,
+      "output_tok_s": 70.21469472821443,
+      "power_watts_mean": 33.637142857142855,
+      "power_watts_peak": 35.13,
+      "temp_c_mean": 56.357142857142854,
+      "tok_s_per_watt": 2.087415540208532,
+      "joules_per_1k_output_tokens": 479.0612988825887
+    },
+    {
+      "concurrency": 8,
+      "requests_ok": 8,
+      "requests_error": 0,
+      "seconds": 15.645748853683472,
+      "output_tokens": 2048,
+      "output_tok_s": 130.89817682442475,
+      "power_watts_mean": 40.51733333333333,
+      "power_watts_peak": 44.95,
+      "temp_c_mean": 60.2,
+      "tok_s_per_watt": 3.2306710747110228,
+      "joules_per_1k_output_tokens": 309.533213649566
+    },
+    {
+      "concurrency": 16,
+      "requests_ok": 16,
+      "requests_error": 0,
+      "seconds": 18.38098669052124,
+      "output_tokens": 4096,
+      "output_tok_s": 222.8389622909763,
+      "power_watts_mean": 41.266111111111115,
+      "power_watts_peak": 48.25,
+      "temp_c_mean": 62.888888888888886,
+      "tok_s_per_watt": 5.4000475521177895,
+      "joules_per_1k_output_tokens": 185.18355446848244
+    }
+  ],
+  "kv_facts": {
+    "kv_tokens": "1,702,722",
+    "max_conc": "32,768 @ 51.96x",
+    "kv_mem": "72.09"
+  },
+  "note": "Track C: 32K context FP8 KV baseline. NVFP4 KV blocked pending FlashInfer PR #3684 + vLLM PR #46329."
+}

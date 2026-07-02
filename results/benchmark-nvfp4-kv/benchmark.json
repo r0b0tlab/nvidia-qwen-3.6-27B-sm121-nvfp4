@@ -1,0 +1,174 @@
+{
+  "utc": "2026-07-02T21:07:20.410983Z",
+  "base_url": "http://127.0.0.1:18080",
+  "model": "Qwen3.6-27B-NVFP4",
+  "models_response": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.6-27B-NVFP4",
+        "object": "model",
+        "created": 1783026440,
+        "owned_by": "vllm",
+        "root": "/models/model",
+        "parent": null,
+        "max_model_len": 32768,
+        "permission": [
+          {
+            "id": "modelperm-838ea8df6c54babc",
+            "object": "model_permission",
+            "created": 1783026440,
+            "allow_create_engine": false,
+            "allow_sampling": true,
+            "allow_logprobs": true,
+            "allow_search_indices": false,
+            "allow_view": true,
+            "allow_fine_tuning": false,
+            "organization": "*",
+            "group": null,
+            "is_blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "gpu_info": "NVIDIA GB10, [N/A], [N/A], [N/A], 580.159.03",
+  "sanity_suite": [
+    {
+      "name": "math",
+      "seconds": 2.6500260829925537,
+      "completion_tokens": 32,
+      "prompt_tokens": 26,
+      "response_text": ""
+    },
+    {
+      "name": "code",
+      "seconds": 5.268643617630005,
+      "completion_tokens": 64,
+      "prompt_tokens": 24,
+      "response_text": ""
+    },
+    {
+      "name": "reasoning",
+      "seconds": 5.278239488601685,
+      "completion_tokens": 64,
+      "prompt_tokens": 47,
+      "response_text": ""
+    },
+    {
+      "name": "factual",
+      "seconds": 2.6450490951538086,
+      "completion_tokens": 32,
+      "prompt_tokens": 21,
+      "response_text": ""
+    },
+    {
+      "name": "instruction",
+      "seconds": 2.644899368286133,
+      "completion_tokens": 32,
+      "prompt_tokens": 24,
+      "response_text": ""
+    }
+  ],
+  "ramp": [
+    {
+      "concurrency": 1,
+      "requests_ok": 1,
+      "requests_error": 0,
+      "seconds": 21.1112859249115,
+      "output_tokens": 256,
+      "output_tok_s": 12.126215376483428,
+      "power_watts_mean": 37.058,
+      "power_watts_peak": 37.23,
+      "power_watts_min": 36.83,
+      "temp_c_mean": 68.75,
+      "temp_c_peak": 69.0,
+      "util_pct_mean": 96.0,
+      "tok_s_per_watt": 0.32722260716939466,
+      "joules_per_1k_output_tokens": 3056.023569552228,
+      "errors": []
+    },
+    {
+      "concurrency": 4,
+      "requests_ok": 4,
+      "requests_error": 0,
+      "seconds": 22.803077220916748,
+      "output_tokens": 1024,
+      "output_tok_s": 44.90621989652817,
+      "power_watts_mean": 36.82590909090909,
+      "power_watts_peak": 39.29,
+      "power_watts_min": 36.63,
+      "temp_c_mean": 69.0909090909091,
+      "temp_c_peak": 70.0,
+      "util_pct_mean": 96.0,
+      "tok_s_per_watt": 1.2194191808183712,
+      "joules_per_1k_output_tokens": 820.06254758834,
+      "errors": []
+    },
+    {
+      "concurrency": 8,
+      "requests_ok": 8,
+      "requests_error": 0,
+      "seconds": 24.00401520729065,
+      "output_tokens": 2048,
+      "output_tok_s": 85.31905942877293,
+      "power_watts_mean": 36.98347826086957,
+      "power_watts_peak": 42.48,
+      "power_watts_min": 36.35,
+      "temp_c_mean": 69.0,
+      "temp_c_peak": 69.0,
+      "util_pct_mean": 96.0,
+      "tok_s_per_watt": 2.3069506558296036,
+      "joules_per_1k_output_tokens": 433.4726438439532,
+      "errors": []
+    },
+    {
+      "concurrency": 16,
+      "requests_ok": 16,
+      "requests_error": 0,
+      "seconds": 27.301644563674927,
+      "output_tokens": 4096,
+      "output_tok_s": 150.0275923103095,
+      "power_watts_mean": 38.46,
+      "power_watts_peak": 49.89,
+      "power_watts_min": 36.2,
+      "temp_c_mean": 69.0,
+      "temp_c_peak": 69.0,
+      "util_pct_mean": 96.0,
+      "tok_s_per_watt": 3.900873435005447,
+      "joules_per_1k_output_tokens": 256.35284421849065,
+      "errors": []
+    },
+    {
+      "concurrency": 32,
+      "requests_ok": 32,
+      "requests_error": 0,
+      "seconds": 34.2417688369751,
+      "output_tokens": 8192,
+      "output_tok_s": 239.2399773213257,
+      "power_watts_mean": 39.8409375,
+      "power_watts_peak": 62.7,
+      "power_watts_min": 37.69,
+      "temp_c_mean": 69.53125,
+      "temp_c_peak": 71.0,
+      "util_pct_mean": 96.0,
+      "tok_s_per_watt": 6.004878206526282,
+      "joules_per_1k_output_tokens": 166.5312710111539,
+      "errors": []
+    }
+  ],
+  "kv_facts": {
+    "kv_tokens": "2,846,446",
+    "max_conc": "32,768 @ 86.87x",
+    "kv_mem": "62.29",
+    "kv_dtype": "nvfp4,",
+    "cache_py_dtype": "nvfp4",
+    "attn_backend": "':"
+  },
+  "metrics": {
+    "vllm:prompt_tokens_total": 3376.0,
+    "vllm:generation_tokens_total": 31693.0,
+    "vllm:spec_decode_num_draft_tokens_total": null,
+    "vllm:spec_decode_num_accepted_tokens_total": null
+  }
+}

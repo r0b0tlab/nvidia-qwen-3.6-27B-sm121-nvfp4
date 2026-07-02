@@ -1,0 +1,10 @@
+*.safetensors
+*.bin
+*.pt
+*.pth
+server.log
+.env
+wheels/
+__pycache__/
+*.pyc
+.hermes/

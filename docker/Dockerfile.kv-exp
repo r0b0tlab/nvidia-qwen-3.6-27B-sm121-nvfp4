@@ -1,0 +1,97 @@
+# =============================================================================
+# SM121 NVFP4 KV CACHE EXPERIMENTAL BUILD
+# vLLM v0.24.0 + FlashInfer PR #3684 + vLLM PR #46329
+# =============================================================================
+
+# ─── Builder stage: compile vLLM v0.24.0 from source ─────────────────────────
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git python3.12 python3.12-dev python3.12-venv python3-pip \
+        wget ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        cuda-toolkit-13-0 cuda-nvcc-13-0 cuda-cudart-dev-13-0 cuda-libraries-dev-13-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
+
+RUN pip3 install --upgrade pip setuptools wheel pybind11 ninja --break-system-packages --ignore-installed
+RUN pip3 install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+
+# Build FlashInfer from PR #3684 branch (has NVFP4 KV FA2 SM120/121 kernels)
+RUN git clone --depth=50 --branch nvfp4-vosplit-rederive https://github.com/jethac/flashinfer.git /workspace/flashinfer-src
+WORKDIR /workspace/flashinfer-src
+ENV TORCH_CUDA_ARCH_LIST="12.1"
+RUN pip3 install --no-cache-dir -v --break-system-packages . 2>&1 | tail -20 || \
+    (echo "FlashInfer build failed, trying pip install" && \
+     pip3 install --break-system-packages flashinfer-python && \
+     echo "WARNING: Using PyPI FlashInfer, NVFP4 KV may not work")
+
+# Clone and patch vLLM v0.24.0
+ARG VLLM_VERSION=v0.24.0
+RUN git clone --depth 1 --branch ${VLLM_VERSION} https://github.com/vllm-project/vllm.git /workspace/vllm-src
+
+WORKDIR /workspace/vllm-src
+
+# Apply vLLM PR #46329 patch (NVFP4 KV cache on SM120/121)
+COPY docker/vllm-pr46329.diff /tmp/vllm-pr46329.diff
+RUN git apply --whitespace=fix /tmp/vllm-pr46329.diff || \
+    (echo "Patch apply failed, trying with --reject-file" && \
+     git apply --whitespace=fix --reject /tmp/vllm-pr46329.diff; \
+     echo "WARNING: Some hunks rejected, check .rej files")
+
+ENV TORCH_CUDA_ARCH_LIST="12.1"
+ENV VLLM_TARGET_DEVICE=cuda
+ENV MAX_JOBS=6
+ENV NVCC_THREADS=2
+ENV VLLM_USE_PRECOMPILED=0
+
+RUN pip3 install --no-cache-dir -v --break-system-packages .
+
+# ─── Runtime stage ───────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-dev python3-pip wget ca-certificates gnupg libgomp1 \
+        build-essential ninja-build pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        cuda-cudart-13-0 cuda-libraries-13-0 cuda-nvrtc-13-0 cuda-nvtx-13-0 \
+        cuda-nvcc-13-0 cuda-libraries-dev-13-0 \
+        libcublas-13-0 libcusparse-13-0 libcusolver-13-0 libcurand-13-0 libcufft-13-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
+
+RUN pip3 install --upgrade pip --break-system-packages || true
+
+# Copy ALL Python packages from builder (torch, flashinfer, vllm, and all deps)
+COPY --from=builder /usr/local/lib/python3.12/dist-packages/ /usr/local/lib/python3.12/dist-packages/
+COPY --from=builder /usr/local/bin/vllm /usr/local/bin/vllm
+
+LABEL org.opencontainers.image.title="SM121 vLLM v0.24.0 NVFP4 KV EXPERIMENTAL"
+LABEL org.opencontainers.image.description="vLLM v0.24.0 + FlashInfer PR #3684 + vLLM PR #46329 — NVFP4 KV cache on SM121"
+LABEL org.opencontainers.image.source="https://github.com/r0b0tlab/qwen36-27b-nvfp4-gb10-native-mtp"
+
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/audit_runtime.py /usr/local/bin/audit_runtime.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

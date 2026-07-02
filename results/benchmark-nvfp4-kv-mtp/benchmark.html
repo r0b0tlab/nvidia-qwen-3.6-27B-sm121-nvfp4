@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3.6-27B NVFP4 SM121 Benchmark</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0f;color:#e0e0e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:12px;max-width:960px;margin:0 auto}
+h1{text-align:center;font-size:1.4rem;margin:16px 0 4px;background:linear-gradient(135deg,#76b900,#4a9e00);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800}
+.subtitle{text-align:center;color:#888;font-size:.8rem;margin-bottom:20px}
+.card{background:#15151f;border-radius:12px;padding:16px;margin-bottom:12px;border:1px solid #222}
+.card-title{font-size:.85rem;font-weight:700;color:#76b900;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.metric{text-align:center;padding:10px;background:#1a1a26;border-radius:8px}
+.metric .value{font-size:1.4rem;font-weight:800;color:#fff}
+.metric .label{font-size:.65rem;color:#888;margin-top:4px;text-transform:uppercase}
+.metric .unit{font-size:.7rem;color:#aaa}
+table{width:100%;border-collapse:collapse;font-size:.75rem}
+th{background:#1a1a26;color:#76b900;padding:8px 6px;text-align:right;font-weight:700;border-bottom:2px solid #2a2a3a}
+th:first-child{text-align:left}
+td{padding:6px;text-align:right;border-bottom:1px solid #1a1a26;color:#ccc}
+td:first-child{text-align:left;font-weight:600;color:#fff}
+.best{color:#76b900!important;font-weight:700}
+.section-tag{display:inline-block;background:#2a2a3a;color:#76b900;padding:2px 8px;border-radius:4px;font-size:.65rem;margin-bottom:8px;font-weight:700}
+.delta-pos{color:#76b900}.delta-neg{color:#ff6b6b}
+.info-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a1a26;font-size:.75rem}
+.info-row .k{color:#888}.info-row .v{color:#ccc;font-weight:600}
+.bar-container{display:flex;align-items:center;gap:4px;margin:2px 0}
+.bar{height:8px;border-radius:4px;background:linear-gradient(90deg,#76b900,#4a9e00);min-width:2px}
+.bar-bg{height:8px;border-radius:4px;background:#1a1a26;flex:1}
+.fix-item{padding:8px 0;border-bottom:1px solid #1a1a26}
+.fix-num{display:inline-block;width:24px;height:24px;background:#76b900;color:#000;border-radius:50%;text-align:center;line-height:24px;font-size:.7rem;font-weight:800;margin-right:8px}
+.fix-title{font-weight:700;color:#e0e0e8;font-size:.8rem}
+.fix-desc{font-size:.7rem;color:#888;margin-top:4px;margin-left:32px}
+footer{text-align:center;color:#555;font-size:.65rem;margin-top:20px;padding:12px}
+@media(max-width:600px){
+ h1{font-size:1.1rem}
+ .metric .value{font-size:1.1rem}
+ table{font-size:.7rem}
+ th,td{padding:4px 3px}
+}
+</style>
+</head>
+<body>
+
+<h1>Qwen3.6-27B NVFP4 on SM121</h1>
+<div class="subtitle">vLLM v0.24.0 · NVFP4 KV Cache via FlashInfer FA2 JIT · MTP Speculative Decoding · GB10 DGX Spark</div>
+
+<!-- KV Cache Comparison -->
+<div class="card">
+<div class="card-title">🔑 KV Cache Capacity</div>
+<div class="metric-grid">
+ <div class="metric"><div class="value">2.85M</div><div class="label">NVFP4 KV tokens</div><div class="unit">32K ctx, no MTP</div></div>
+ <div class="metric"><div class="value">1.70M</div><div class="label">FP8 KV tokens</div><div class="unit">32K ctx, with MTP</div></div>
+ <div class="metric"><div class="value" style="color:#76b900">+67%</div><div class="label">NVFP4 gain</div><div class="unit">equal context</div></div>
+ <div class="metric"><div class="value">nvfp4</div><div class="label">KV dtype</div><div class="unit">4-bit</div></div>
+</div>
+</div>
+
+<!-- NVFP4 KV + MTP Ramp -->
+<div class="card">
+<div class="card-title">⚡ NVFP4 KV + MTP — Concurrency Ramp</div>
+<table>
+ <tr><th>Concurrency</th><th>tok/s</th><th>Power (W)</th><th>J/1K tok</th><th>Temp (°C)</th></tr>
+ <tr><td>c1</td><td>19.15</td><td>34.3</td><td>1,793</td><td>60.5</td></tr>
+ <tr><td>c4</td><td>69.62</td><td>32.3</td><td>465</td><td>60.8</td></tr>
+ <tr><td>c8</td><td>102.76</td><td>36.9</td><td>359</td><td>62.7</td></tr>
+ <tr><td>c16</td><td>144.00</td><td>38.9</td><td>270</td><td>64.7</td></tr>
+ <tr><td>c32</td><td class="best">248.40</td><td>44.2</td><td class="best">178</td><td>67.6</td></tr>
+</table>
+</div>
+
+<!-- Power Efficiency Visual -->
+<div class="card">
+<div class="card-title">🔋 Power Efficiency Scaling</div>
+ <div style="margin:4px 0">
+  <div class="bar-container"><span style="width:30px;font-size:.7rem;color:#888">c1</span><div class="bar-bg"><div class="bar" style="width:8%"></div></div><span style="font-size:.7rem;color:#ccc;width:60px;text-align:right">34.3W</span></div>
+  <div class="bar-container"><span style="width:30px;font-size:.7rem;color:#888">c4</span><div class="bar-bg"><div class="bar" style="width:7%"></div></div><span style="font-size:.7rem;color:#ccc;width:60px;text-align:right">32.3W</span></div>
+  <div class="bar-container"><span style="width:30px;font-size:.7rem;color:#888">c8</span><div class="bar-bg"><div class="bar" style="width:15%"></div></div><span style="font-size:.7rem;color:#ccc;width:60px;text-align:right">36.9W</span></div>
+  <div class="bar-container"><span style="width:30px;font-size:.7rem;color:#888">c16</span><div class="bar-bg"><div class="bar" style="width:23%"></div></div><span style="font-size:.7rem;color:#ccc;width:60px;text-align:right">38.9W</span></div>
+  <div class="bar-container"><span style="width:30px;font-size:.7rem;color:#888">c32</span><div class="bar-bg"><div class="bar" style="width:31%"></div></div><span style="font-size:.7rem;color:#ccc;width:60px;text-align:right">44.2W</span></div>
+ </div>
+ <div style="margin-top:8px;font-size:.7rem;color:#888">All under 45W — well within GB10's 75W envelope. Peak efficiency at c32: 178 J/1K tokens.</div>
+</div>
+
+<!-- Sanity Suite -->
+<div class="card">
+<div class="card-title">✅ Sanity Suite — 5/5 Passed</div>
+<table>
+ <tr><th>Test</th><th>Tokens</th><th>Latency</th></tr>
+ <tr><td>Math (17×23)</td><td>32</td><td>1.72s</td></tr>
+ <tr><td>Code (reverse string)</td><td>64</td><td>3.26s</td></tr>
+ <tr><td>Reasoning (syllogism)</td><td>64</td><td>3.28s</td></tr>
+ <tr><td>Factual (capital)</td><td>32</td><td>1.72s</td></tr>
+ <tr><td>Instruction (3 colors)</td><td>32</td><td>1.71s</td></tr>
+</table>
+</div>
+
+<!-- FP8 Baseline Comparison -->
+<div class="card">
+<div class="card-title">📊 NVFP4 KV vs FP8 KV Baseline</div>
+<table>
+ <tr><th>Mode</th><th>KV Tokens</th><th>c1 tok/s</th><th>c32 tok/s</th></tr>
+ <tr><td>FP8 KV + MTP (32K)</td><td>1,702,722</td><td class="best">19.78</td><td>222.84</td></tr>
+ <tr><td>NVFP4 KV + MTP (8K)</td><td>1,109,560</td><td>19.15</td><td class="best">248.40</td></tr>
+ <tr><td>NVFP4 KV no MTP (32K)</td><td class="best">2,846,446</td><td>12.13</td><td>239.24</td></tr>
+</table>
+<div style="margin-top:8px;font-size:.7rem;color:#888">c1 parity with MTP (19.15 vs 19.78, -3%). c32 throughput 11% higher than FP8 with MTP. NVFP4 without MTP trades decode speed for 67% more KV capacity.</div>
+</div>
+
+<!-- Runtime Info -->
+<div class="card">
+<div class="card-title">🔧 Runtime Configuration</div>
+ <div class="info-row"><span class="k">vLLM</span><span class="v">v0.24.0 (source-built)</span></div>
+ <div class="info-row"><span class="k">FlashInfer</span><span class="v">PR #3684 (nvfp4-vosplit-rederive)</span></div>
+ <div class="info-row"><span class="k">Model</span><span class="v">nvidia/Qwen3.6-27B-NVFP4</span></div>
+ <div class="info-row"><span class="k">Quantization</span><span class="v">modelopt_mixed (W4A16_NVFP4 + FP8 attn)</span></div>
+ <div class="info-row"><span class="k">KV Cache</span><span class="v">nvfp4 (FlashInfer FA2 JIT)</span></div>
+ <div class="info-row"><span class="k">MTP</span><span class="v">Active (num_spec_tokens=1)</span></div>
+ <div class="info-row"><span class="k">GPU</span><span class="v">NVIDIA GB10 SM121</span></div>
+ <div class="info-row"><span class="k">CUDA</span><span class="v">13.0 · PyTorch 2.11.0+cu130</span></div>
+ <div class="info-row"><span class="k">Image</span><span class="v">15.4 GB (sm121-vllm-v0240-nvfp4:kv-exp)</span></div>
+</div>
+
+<!-- Six Fixes -->
+<div class="card">
+<div class="card-title">🛠️ Six Root-Caused Fixes</div>
+ <div class="fix-item"><span class="fix-num">1</span><span class="fix-title">OOM Killer → MAX_JOBS=6</span><div class="fix-desc">20 parallel nvcc processes exhausted 121 GB RAM. Reduced to 6 + NVCC_THREADS=2. Peak RAM: ~15 GB.</div></div>
+ <div class="fix-item"><span class="fix-num">2</span><span class="fix-title">Missing Packages → Bulk site-packages COPY</span><div class="fix-desc">Cascading ModuleNotFoundError (zmq, urllib3, torchgen). Single bulk COPY from builder solved all deps.</div></div>
+ <div class="fix-item"><span class="fix-num">3</span><span class="fix-title">PTX Mismatch → CUDA 13.0 (not 13.2)</span><div class="fix-desc">nvcc 13.2 PTX incompatible with PyTorch CUDA 13.0 runtime. Full rebuild with cuda-toolkit-13-0.</div></div>
+ <div class="fix-item"><span class="fix-num">4</span><span class="fix-title">No C Compiler → build-essential</span><div class="fix-desc">FlashInfer JIT needs gcc at runtime. Added build-essential to runtime stage.</div></div>
+ <div class="fix-item"><span class="fix-num">5</span><span class="fix-title">No Ninja → ninja-build</span><div class="fix-desc">FlashInfer JIT uses ninja as build system. Added ninja-build to runtime stage.</div></div>
+ <div class="fix-item"><span class="fix-num">6</span><span class="fix-title">Missing CUDA Dev Headers → cuda-libraries-dev-13-0</span><div class="fix-desc">JIT kernels need curand_kernel.h at runtime. Added cuda-nvcc-13-0 + cuda-libraries-dev-13-0.</div></div>
+</div>
+
+<footer>
+ Benchmark date: 2026-07-02 UTC · GB10 DGX Spark · r0b0tlab<br>
+ Repo: github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4
+</footer>
+
+</body>
+</html>

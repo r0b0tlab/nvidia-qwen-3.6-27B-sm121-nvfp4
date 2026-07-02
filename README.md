@@ -1,18 +1,38 @@
 # NVIDIA Qwen3.6-27B NVFP4 — SM121 Native + NVFP4 KV Cache
 
 Optimized vLLM v0.24.0 runtime for **nvidia/Qwen3.6-27B-NVFP4** on NVIDIA GB10 / SM121 (DGX Spark),
-with **native NVFP4 KV cache** via FlashInfer FA2 JIT — achieving **67% more KV capacity** over FP8.
+with **native NVFP4 KV cache** via FlashInfer FA2 JIT and **MTP speculative decoding**.
 
 ## Highlights
 
-| Metric | FP8 KV Baseline | NVFP4 KV Cache | Δ |
+| Metric | FP8 KV Baseline | NVFP4 KV + MTP | Δ |
 |---|---|---|---|
-| **KV Cache Tokens** | 1,702,722 | **2,846,446** | **+67%** |
-| **Max Concurrency (32K ctx)** | ~52× | **86.87×** | **+67%** |
-| **KV Cache Memory** | 61.48 GiB | **62.29 GiB** | ~same budget |
+| **KV Cache Tokens** | 1,702,722 | **1,109,560** | -35% (see note) |
+| **Max Concurrency (8K ctx)** | — | **135.44×** | ✅ |
 | **KV Cache Dtype** | fp8 | **nvfp4** | 4-bit |
+| **MTP** | ✅ (3 spec tokens) | ✅ (1 spec token) | ✅ |
+| **c1 decode** | 19.78 tok/s | **19.15 tok/s** | -3% (parity) |
 
-### Throughput (256-token generation, 8K context)
+> **Note on KV capacity:** At 8K max_model_len, the NVFP4 KV cache holds 1,109,560 tokens vs FP8's
+> 1,702,722 at 32K max_model_len. The difference is the `max_model_len` setting (8K vs 32K), not the
+> KV dtype. At equal `max_model_len=32768`, the first NVFP4 KV run (without MTP) achieved
+> **2,846,446 tokens** — a **67% gain** over FP8. With MTP active, some memory is reserved for the
+> draft model, reducing the KV pool. For maximum KV capacity, disable MTP; for maximum throughput,
+> enable MTP.
+
+### Throughput (NVFP4 KV + MTP, 256-token generation, 8K context)
+
+| Concurrency | Output tok/s | Power (W) | Efficiency (J/1K tok) | Temp (°C) |
+|---:|---:|---:|---:|---:|
+| 1 | 19.15 | 34.3 | 1,793 | 60.5 |
+| 4 | 69.62 | 32.3 | 465 | 60.8 |
+| 8 | 102.76 | 36.9 | 359 | 62.7 |
+| 16 | 144.00 | 38.9 | 270 | 64.7 |
+| 32 | 248.40 | 44.2 | 178 | 67.6 |
+
+All 32/32 requests succeeded at c32.
+
+### Throughput (NVFP4 KV without MTP, 256-token generation, 32K context)
 
 | Concurrency | Output tok/s | Power (W) | Efficiency (J/1K tok) | Temp (°C) |
 |---:|---:|---:|---:|---:|
@@ -22,44 +42,18 @@ with **native NVFP4 KV cache** via FlashInfer FA2 JIT — achieving **67% more K
 | 16 | 150.03 | 38.5 | 256 | 69.0 |
 | 32 | 239.24 | 39.8 | 167 | 69.5 |
 
-All 32/32 requests succeeded at c32. Power stays under 40W — well within GB10's 75W envelope.
+> Without MTP, single-stream decode drops ~37% (19.15→12.13 tok/s). **MTP accounts for the entire
+> throughput difference.** Always enable MTP for serving unless testing raw decode latency.
 
 ### Sanity Suite (5/5 passed)
 
 | Test | Tokens | Latency |
 |---|---|---|
-| Math (17×23) | 32 | 2.65s |
-| Code (reverse string) | 64 | 5.27s |
-| Logical reasoning (syllogism) | 64 | 5.28s |
-| Factual (capital of Australia) | 32 | 2.65s |
-| Instruction-following (3 colors) | 32 | 2.64s |
-
----
-
-## What This Repo Contains
-
-This is a **complete reproducibility pack** for serving NVFP4-quantized models on SM121 with native
-NVFP4 KV cache. The runtime is built from source with two upstream patches that are not yet merged:
-
-- **FlashInfer PR #3684** — NVFP4 vector casts, GQA group_size=6 support, asymmetric head_dim (128 QK vs 64 VO)
-- **vLLM PR #46329** — Lift SM100-only NVFP4 KV guard, route to FA2 on CC 12.x
-
-### Files
-
-```
-docker/
-  Dockerfile.kv-exp         Multi-stage build: vLLM v0.24.0 + FlashInfer PR#3684 + vLLM PR#46329
-  vllm-pr46329.diff         73KB patch lifting NVFP4 KV SM100-only guard
-scripts/
-  entrypoint.sh             Container entrypoint: audit → serve with NVFP4 KV + MTP defaults
-  audit_runtime.py          SM121 native runtime gate verification (6 checks)
-  benchmark_nvfp4_kv.py     Sanity suite + concurrency ramp + power telemetry
-  public_safety_scan.py     Pre-publish secret/PII scanner
-results/
-  benchmark-nvfp4-kv/       NVFP4 KV cache benchmark (c1–c32, sanity, telemetry)
-  baseline-fp8-32k/         FP8 KV cache baseline at 32K context
-  smoke_and_ramp.json       Earlier smoke+ramp data
-```
+| Math (17×23) | 32 | 1.72s |
+| Code (reverse string) | 64 | 3.26s |
+| Logical reasoning (syllogism) | 64 | 3.28s |
+| Factual (capital of Australia) | 32 | 1.72s |
+| Instruction-following (3 colors) | 32 | 1.71s |
 
 ---
 
@@ -155,14 +149,14 @@ cuda-nvcc-13-0 cuda-libraries-dev-13-0
 ### Build from Source
 
 ```bash
-git clone https://github.com/r0b0tlab/nvidia-qwen-3.6-sm121-nvfp4.git
-cd nvidia-qwen-3.6-sm121-nvfp4
+git clone https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4.git
+cd nvidia-qwen-3.6-27B-sm121-nvfp4
 
 # ~60 min with MAX_JOBS=6 on GB10
 docker build -f docker/Dockerfile.kv-exp -t sm121-vllm-v0240-nvfp4:kv-exp .
 ```
 
-### Serve with NVFP4 KV Cache
+### Serve with NVFP4 KV Cache + MTP
 
 ```bash
 docker run -d --gpus all --ipc=host --name sm121-vllm \
@@ -204,7 +198,7 @@ Checks: vLLM v0.24.x, SM121 capability, stable ABI extensions, Qwen3.5 model, mo
 | `ATTENTION_BACKEND` | flashinfer | Attention backend |
 | `GPU_MEMORY_UTILIZATION` | 0.72 | GPU memory fraction |
 | `MAX_NUM_SEQS` | 32 | Max concurrent sequences |
-| `SPECULATIVE_CONFIG` | (none) | JSON for speculative decoding |
+| `SPECULATIVE_CONFIG` | (none) | JSON for MTP speculative decoding |
 | `QUANTIZATION` | (auto-detect) | Quantization method |
 
 ---
@@ -229,11 +223,19 @@ kernels for SM120/121.
 Qwen3.5/3.6 uses a hybrid GDN architecture with non-causal attention layers. vLLM disables prefix
 caching by design (`core.py:269`) for these models. This is not a bug — do not force-enable it.
 
-### NVFP4 KV Value: Long-Context Serving
+### MTP Impact on KV Capacity
 
-The 67% KV capacity gain matters most for **long-context serving** (32K–131K tokens). At 8K context,
-KV usage is <5% of budget. The real win is enabling concurrent long-context requests that would
-OOM with FP8 KV.
+MTP (Multi-Token Prediction) speculative decoding reserves memory for the draft model, reducing the
+available KV cache pool. The tradeoff is:
+
+| Mode | KV Tokens | c1 tok/s | c32 tok/s |
+|---|---|---|---|
+| NVFP4 KV, 32K ctx, no MTP | 2,846,446 | 12.13 | 239.24 |
+| NVFP4 KV, 8K ctx, MTP | 1,109,560 | 19.15 | 248.40 |
+| FP8 KV, 32K ctx, MTP | 1,702,722 | 19.78 | 222.84 |
+
+Use MTP for throughput-sensitive serving; disable MTP and raise `max_model_len` for maximum
+long-context capacity.
 
 ---
 

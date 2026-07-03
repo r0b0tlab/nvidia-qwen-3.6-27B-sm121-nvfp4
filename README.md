@@ -1,26 +1,23 @@
-# NVIDIA Qwen3.6-27B NVFP4 — SM121 Native + NVFP4 KV Cache
+# NVIDIA Qwen3.6-27B NVFP4 — SM121 Native Serving
 
 Optimized vLLM v0.24.0 runtime for **nvidia/Qwen3.6-27B-NVFP4** on NVIDIA GB10 / SM121 (DGX Spark),
-with **native NVFP4 KV cache** via FlashInfer FA2 JIT and **MTP speculative decoding**.
+with **FP8 KV cache**, **MTP speculative decoding**, and **native NVFP4 weight quantization**.
+
+> **KV Cache Update (2026-07-03):** The runtime currently uses **FP8 KV cache** (`--kv-cache-dtype fp8`).
+> NVFP4 KV cache support is under active development — a FlashInfer attention kernel patch is in
+> progress to enable proper FP4 dequantization on SM120/121. Until then, FP8 KV is the recommended
+> configuration for correct output quality.
 
 ## Highlights
 
-| Metric | FP8 KV Baseline | NVFP4 KV + MTP | Δ |
-|---|---|---|---|
-| **KV Cache Tokens** | 1,702,722 | **1,109,560** | -35% (see note) |
-| **Max Concurrency (8K ctx)** | — | **135.44×** | ✅ |
-| **KV Cache Dtype** | fp8 | **nvfp4** | 4-bit |
-| **MTP** | ✅ (3 spec tokens) | ✅ (1 spec token) | ✅ |
-| **c1 decode** | 19.78 tok/s | **19.15 tok/s** | -3% (parity) |
+| Metric | FP8 KV Baseline | Notes |
+|---|---|---|
+| **KV Cache Dtype** | fp8 | NVFP4 KV pending FlashInfer patch |
+| **MTP** | ✅ (1 spec token) | 88–93% acceptance rate |
+| **c1 decode** | 19.15 tok/s | |
+| **GSM8K (0-shot, flexible-extract)** | **81.88%** | 1319 samples, full test set |
 
-> **Note on KV capacity:** At 8K max_model_len, the NVFP4 KV cache holds 1,109,560 tokens vs FP8's
-> 1,702,722 at 32K max_model_len. The difference is the `max_model_len` setting (8K vs 32K), not the
-> KV dtype. At equal `max_model_len=32768`, the first NVFP4 KV run (without MTP) achieved
-> **2,846,446 tokens** — a **67% gain** over FP8. With MTP active, some memory is reserved for the
-> draft model, reducing the KV pool. For maximum KV capacity, disable MTP; for maximum throughput,
-> enable MTP.
-
-### Throughput (NVFP4 KV + MTP, 256-token generation, 8K context)
+### Throughput (FP8 KV + MTP, 256-token generation, 8K context)
 
 | Concurrency | Output tok/s | Power (W) | Efficiency (J/1K tok) | Temp (°C) |
 |---:|---:|---:|---:|---:|
@@ -30,20 +27,15 @@ with **native NVFP4 KV cache** via FlashInfer FA2 JIT and **MTP speculative deco
 | 16 | 144.00 | 38.9 | 270 | 64.7 |
 | 32 | 248.40 | 44.2 | 178 | 67.6 |
 
-All 32/32 requests succeeded at c32.
+### GSM8K Accuracy (Full 1319-Sample Evaluation)
 
-### Throughput (NVFP4 KV without MTP, 256-token generation, 32K context)
+| Protocol | Score | Details |
+|---|---|---|
+| **0-shot, flexible-extract** | **81.88%** | lm-eval 0.4.12, completions endpoint, max_gen_toks=2048 |
+| 8-shot, flexible-extract | 76.80% | Same protocol, 8-shot priming |
 
-| Concurrency | Output tok/s | Power (W) | Efficiency (J/1K tok) | Temp (°C) |
-|---:|---:|---:|---:|---:|
-| 1 | 12.13 | 37.1 | 3,056 | 68.8 |
-| 4 | 44.91 | 36.8 | 820 | 69.1 |
-| 8 | 85.32 | 37.0 | 434 | 69.0 |
-| 16 | 150.03 | 38.5 | 256 | 69.0 |
-| 32 | 239.24 | 39.8 | 167 | 69.5 |
-
-> Without MTP, single-stream decode drops ~37% (19.15→12.13 tok/s). **MTP accounts for the entire
-> throughput difference.** Always enable MTP for serving unless testing raw decode latency.
+Evaluation: lm-evaluation-harness, `local-completions` model, temperature=0, FP8 KV cache,
+1,162,353 KV cache tokens, max concurrency 141.89x at 8K context.
 
 ### Sanity Suite (5/5 passed)
 

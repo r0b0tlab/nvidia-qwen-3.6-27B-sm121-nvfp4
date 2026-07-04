@@ -37,6 +37,17 @@ with **FP8 KV cache**, **MTP speculative decoding**, and **native NVFP4 weight q
 Evaluation: lm-evaluation-harness, `local-completions` model, temperature=0, FP8 KV cache,
 1,162,353 KV cache tokens, max concurrency 141.89x at 8K context.
 
+### GSM8K Full-Set Accuracy — lm-eval-harness
+
+Reported metric is **flexible-extract exact match**. Strict-match is preserved in the raw artifacts but is not the headline metric.
+
+| Run | Samples | N-shot | Endpoint | Score | Stderr | Artifacts |
+|---|---:|---:|---|---:|---:|---|
+| Qwen3.6-27B NVFP4 | 1,319 | 0 | completions | **81.88%** | ±1.06% | `results/gsm8k-full-0shot-node2-20260703/` |
+| Qwen3.6-27B NVFP4 | 1,319 | 8 | completions | **76.80%** | ±1.16% | `results/gsm8k-full-8shot-20260703/` |
+
+Each GSM8K artifact directory contains the lm-eval aggregate JSON, preserved sample JSONL, run log, and SHA256 manifest.
+
 ### Sanity Suite (5/5 passed)
 
 | Test | Tokens | Latency |

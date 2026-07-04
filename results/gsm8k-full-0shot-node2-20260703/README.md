@@ -12,6 +12,6 @@
 Artifacts:
 
 - `results.json` — lm-eval aggregate output
-- `samples.jsonl` — preserved per-sample lm-eval output
+- `samples.jsonl` — public-safety-sanitized per-sample lm-eval output
 - `run.log` — harness stdout/stderr
 - `MANIFEST.sha256` — artifact hashes

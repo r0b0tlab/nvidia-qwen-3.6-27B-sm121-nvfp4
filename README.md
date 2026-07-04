@@ -46,7 +46,7 @@ Reported metric is **flexible-extract exact match**. Strict-match is preserved i
 | Qwen3.6-27B NVFP4 | 1,319 | 0 | completions | **81.88%** | ±1.06% | `results/gsm8k-full-0shot-node2-20260703/` |
 | Qwen3.6-27B NVFP4 | 1,319 | 8 | completions | **76.80%** | ±1.16% | `results/gsm8k-full-8shot-20260703/` |
 
-Each GSM8K artifact directory contains the lm-eval aggregate JSON, preserved sample JSONL, run log, and SHA256 manifest.
+Each GSM8K artifact directory contains the lm-eval aggregate JSON, public-safety-sanitized sample JSONL, run log, and SHA256 manifest.
 
 ### Sanity Suite (5/5 passed)
 

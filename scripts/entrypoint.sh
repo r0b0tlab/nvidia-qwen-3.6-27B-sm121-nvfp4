@@ -1,13 +1,30 @@
 #!/usr/bin/env bash
-# Qwen3.6-27B NVFP4 launch contract for GB10 / SM121.
+# Qwen3.6-27B NVFP4-weight launch contract for GB10 / SM121.
 set -euo pipefail
 
+AUDIT_BIN=/usr/local/bin/audit_runtime.py
+
 if [[ "${1:-}" == "audit" ]]; then
-    exec /usr/local/bin/audit_runtime.py
+    exec "$AUDIT_BIN"
 fi
 
-# Preserve Docker/sparkrun command semantics. In particular, sparkrun passes
-# `bash -c <serve command>` after the image entrypoint.
+KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
+NVFP4_KV_ENABLED="${R0B0TLAB_NVFP4_KV_ENABLED:-0}"
+joined_args=" $* "
+if [[ "$NVFP4_KV_ENABLED" != "1" ]] && {
+    [[ "$KV_CACHE_DTYPE" == "nvfp4" ]] \
+        || [[ "$joined_args" == *" --kv-cache-dtype nvfp4 "* ]] \
+        || [[ "$joined_args" == *" --kv-cache-dtype=nvfp4 "* ]];
+}; then
+    echo "R0B0TLAB_LAUNCH_REJECTED: NVFP4 KV is disabled in this production image; use fp8" >&2
+    exit 64
+fi
+
+# Every executable path is admitted by the same fail-closed GPU/runtime audit.
+# This includes explicit Docker/Kubernetes commands and sparkrun's `bash -c`.
+"$AUDIT_BIN"
+
+# Preserve Docker/sparkrun argv semantics after admission.
 if (( $# > 0 )); then
     exec "$@"
 fi
@@ -19,13 +36,9 @@ PORT="${PORT:-8000}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-32}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
-KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
 MTP_TOKENS="${MTP_TOKENS:-1}"
 
 export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASHINFER}"
-if [[ "$KV_CACHE_DTYPE" == "nvfp4" ]]; then
-    export VLLM_KV_CACHE_LAYOUT="${VLLM_KV_CACHE_LAYOUT:-HND}"
-fi
 
 args=(
     vllm serve "$MODEL_PATH"

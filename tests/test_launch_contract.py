@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
+import stat
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,43 +15,97 @@ ENTRYPOINT = ROOT / "scripts" / "entrypoint.sh"
 RECIPE = ROOT / "sparkrun" / "recipes" / "qwen3.6-27b-nvfp4-vllm-r0b0tlab.yaml"
 
 
+def staged_entrypoint(tmp: Path, audit_exit: int = 0) -> tuple[Path, Path]:
+    audit_marker = tmp / "audit-ran"
+    fake_audit = tmp / "audit_runtime.py"
+    fake_audit.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf ran > {audit_marker!s}\n"
+        f"exit {audit_exit}\n"
+    )
+    fake_audit.chmod(fake_audit.stat().st_mode | stat.S_IEXEC)
+    staged = tmp / "entrypoint.sh"
+    staged.write_text(
+        ENTRYPOINT.read_text().replace(
+            "AUDIT_BIN=/usr/local/bin/audit_runtime.py",
+            f"AUDIT_BIN={fake_audit}",
+        )
+    )
+    staged.chmod(staged.stat().st_mode | stat.S_IEXEC)
+    return staged, audit_marker
+
+
 class LaunchContractTests(unittest.TestCase):
     def test_entrypoint_shell_syntax(self) -> None:
         subprocess.run(["bash", "-n", str(ENTRYPOINT)], check=True)
 
-    def test_entrypoint_preserves_argv(self) -> None:
+    def test_entrypoint_preserves_argv_after_audit(self) -> None:
         text = ENTRYPOINT.read_text()
         self.assertIn('exec "$@"', text)
         self.assertNotIn("eval ", text)
-
         expected = ["alpha beta", "gamma", "delta epsilon"]
-        result = subprocess.run(
-            [
-                str(ENTRYPOINT),
-                sys.executable,
-                "-c",
-                "import json,sys; print(json.dumps(sys.argv[1:]))",
-                *expected,
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(json.loads(result.stdout), expected)
+        with tempfile.TemporaryDirectory() as raw:
+            staged, audit_marker = staged_entrypoint(Path(raw))
+            result = subprocess.run(
+                [
+                    staged,
+                    sys.executable,
+                    "-c",
+                    "import json,sys; print(json.dumps(sys.argv[1:]))",
+                    *expected,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(json.loads(result.stdout), expected)
+            self.assertTrue(audit_marker.exists())
 
     def test_entrypoint_returns_exact_child_exit_code(self) -> None:
-        result = subprocess.run(
-            [str(ENTRYPOINT), "/bin/bash", "-c", "exit 37"],
-            check=False,
-        )
-        self.assertEqual(result.returncode, 37)
+        with tempfile.TemporaryDirectory() as raw:
+            staged, _ = staged_entrypoint(Path(raw))
+            result = subprocess.run([staged, "/bin/bash", "-c", "exit 37"], check=False)
+            self.assertEqual(result.returncode, 37)
 
-    def test_audit_is_a_dedicated_subcommand(self) -> None:
+    def test_failed_audit_blocks_explicit_child(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            staged, audit_marker = staged_entrypoint(tmp, audit_exit=23)
+            child_marker = tmp / "child-ran"
+            result = subprocess.run(
+                [staged, "/bin/bash", "-c", f"printf ran > {child_marker}"],
+                check=False,
+            )
+            self.assertEqual(result.returncode, 23)
+            self.assertTrue(audit_marker.exists())
+            self.assertFalse(child_marker.exists())
+
+    def test_audit_is_a_dedicated_subcommand_and_launch_admission(self) -> None:
         text = ENTRYPOINT.read_text()
         audit_branch = 'if [[ "${1:-}" == "audit" ]]; then'
+        explicit_branch = 'if (( $# > 0 )); then'
         self.assertIn(audit_branch, text)
-        self.assertIn('exec /usr/local/bin/audit_runtime.py', text)
-        self.assertLess(text.index(audit_branch), text.index('if (( $# > 0 )); then'))
+        self.assertIn('exec "$AUDIT_BIN"', text)
+        self.assertIn('"$AUDIT_BIN"', text)
+        self.assertLess(text.index(audit_branch), text.index(explicit_branch))
+        self.assertLess(text.index('"$AUDIT_BIN"', text.index(audit_branch) + len(audit_branch)), text.index(explicit_branch))
+
+    def test_production_rejects_nvfp4_kv_before_audit(self) -> None:
+        for argv, env_update in (
+            (["/bin/true", "--kv-cache-dtype", "nvfp4"], {}),
+            (["/bin/true", "--kv-cache-dtype=nvfp4"], {}),
+            (["/bin/true"], {"KV_CACHE_DTYPE": "nvfp4"}),
+            (["bash", "-c", "vllm serve /m --kv-cache-dtype nvfp4"], {}),
+        ):
+            with self.subTest(argv=argv, env_update=env_update), tempfile.TemporaryDirectory() as raw:
+                staged, audit_marker = staged_entrypoint(Path(raw))
+                env = os.environ.copy()
+                env["R0B0TLAB_NVFP4_KV_ENABLED"] = "0"
+                env.update(env_update)
+                result = subprocess.run([staged, *argv], env=env, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 64)
+                self.assertIn("NVFP4 KV is disabled", result.stderr)
+                self.assertFalse(audit_marker.exists())
 
     def test_zero_arg_defaults_are_fail_closed(self) -> None:
         text = ENTRYPOINT.read_text()
@@ -62,9 +119,10 @@ class LaunchContractTests(unittest.TestCase):
         text = RECIPE.read_text()
         self.assertIn("recipe_version: \"2\"", text)
         self.assertIn("model_revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404", text)
-        self.assertIn("container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-kv-exp", text)
+        self.assertIn("container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production", text)
         self.assertIn("vllm serve {model}", text)
         self.assertIn("kv_dtype: fp8", text)
+        self.assertIn("R0B0TLAB_NVFP4_KV_ENABLED: \"0\"", text)
         self.assertIn("--kv-cache-dtype fp8", text)
         self.assertIn('"num_speculative_tokens":1', text)
         self.assertIn("--speculative-config '{speculative_config}'", text)

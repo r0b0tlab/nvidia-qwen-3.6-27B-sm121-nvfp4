@@ -5,7 +5,7 @@ model: nvidia/Qwen3.6-27B-NVFP4
 model_revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
 runtime: vllm
 runtime_version: "0.25.1"
-container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-kv-exp
+container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production
 min_nodes: 1
 max_nodes: 1
 metadata:
@@ -27,6 +27,7 @@ defaults:
   speculative_config: '{"method":"qwen3_next_mtp","num_speculative_tokens":1}'
 env:
   R0B0TLAB_QWEN27_NATIVE_W4A4: "1"
+  R0B0TLAB_NVFP4_KV_ENABLED: "0"
   VLLM_ATTENTION_BACKEND: FLASHINFER
   FLASHINFER_NVCC_THREADS: "2"
 command: |

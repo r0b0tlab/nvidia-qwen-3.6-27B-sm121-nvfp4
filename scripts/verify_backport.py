@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate immutable release/backport inputs before a Docker build."""
+"""Validate immutable release, production, and experimental backport inputs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ import sys
 
 RELEASE = "752a3a504485790a2e8491cacbb35c137339ad34"
 PR_HEAD = "dfed053c9e5cddc2ea35939e5dcf439f69290a57"
-FLASHINFER = "741b63720bb345d9036d38b33a7b5a043d4c2674"
+FLASHINFER_EXPERIMENTAL = "741b63720bb345d9036d38b33a7b5a043d4c2674"
+FLASHINFER_PRODUCTION = "0.6.13"
 MODEL = "0893e1606ff3d5f97a441f405d5fc541a6bdf404"
 EXPECTED_PATHS = {
     "csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu",
@@ -36,10 +37,12 @@ def validate(root: Path) -> list[str]:
     docker = root / "docker"
     eq = json.loads((docker / "backport-equivalence-v0.25.1.json").read_text())
     scale = json.loads((docker / "qwen27-w4a16-scale-audit.json").read_text())
-    runtime = json.loads((docker / "runtime-manifest.json").read_text())
+    experimental = json.loads((docker / "runtime-manifest.json").read_text())
+    production = json.loads((docker / "runtime-manifest.production.json").read_text())
     pr_patch = (docker / "vllm-pr46329-v0.25.1.diff").read_text()
     native_patch = (docker / "native-w4a4-qwen27-v0.25.1.diff").read_text()
-    dockerfile = (docker / "Dockerfile.kv-exp").read_text()
+    experimental_dockerfile = (docker / "Dockerfile.kv-exp").read_text()
+    production_dockerfile = (docker / "Dockerfile.production").read_text()
 
     if eq.get("release_base") != RELEASE:
         failures.append("equivalence release_base mismatch")
@@ -67,9 +70,8 @@ def validate(root: Path) -> list[str]:
     if scale.get("missing") or scale.get("nonfinite") or scale.get("nonpositive"):
         failures.append("checkpoint scale audit contains invalid scales")
 
-    required_docker = [
+    common_markers = [
         RELEASE,
-        FLASHINFER,
         "cuda-toolkit-13-0",
         "/usr/bin/python3 -m venv /opt/vllm",
         "COPY --from=builder /opt/vllm/ /opt/vllm/",
@@ -80,23 +82,57 @@ def validate(root: Path) -> list[str]:
         'refs/tags/${VLLM_TAG}:refs/tags/${VLLM_TAG}',
         "describe --tags --exact-match HEAD",
         "--no-build-isolation --no-deps .",
-        "git apply --check /tmp/vllm-pr46329-v0.25.1.diff",
         "git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff",
         'org.opencontainers.image.source="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4"',
     ]
-    for marker in required_docker:
-        if marker not in dockerfile:
-            failures.append(f"Dockerfile marker missing: {marker}")
-    if "FlashInfer build failed" in dockerfile or "pip install flashinfer-python" in dockerfile:
-        failures.append("Dockerfile contains a silent FlashInfer fallback")
-    if runtime.get("vllm_commit") != RELEASE:
-        failures.append("runtime manifest vLLM commit mismatch")
-    if runtime.get("vllm_tag") != "v0.25.1":
-        failures.append("runtime manifest vLLM tag mismatch")
-    if runtime.get("flashinfer_commit") != FLASHINFER:
-        failures.append("runtime manifest FlashInfer commit mismatch")
-    if runtime.get("model_revision") != MODEL:
-        failures.append("runtime manifest model revision mismatch")
+    for marker in common_markers:
+        if marker not in production_dockerfile:
+            failures.append(f"production Dockerfile marker missing: {marker}")
+    production_markers = [
+        'md.version("flashinfer-python") == "0.6.13"',
+        "R0B0TLAB_NVFP4_KV_ENABLED=0",
+        'io.r0b0tlab.profile="production-fp8"',
+        "runtime-manifest.production.json",
+        "0.25.1-production",
+    ]
+    for marker in production_markers:
+        if marker not in production_dockerfile:
+            failures.append(f"production Dockerfile marker missing: {marker}")
+    for forbidden in (FLASHINFER_EXPERIMENTAL, "vllm-pr46329-v0.25.1.diff", "0.25.1-kv-exp"):
+        if forbidden in production_dockerfile:
+            failures.append(f"experimental marker leaked into production Dockerfile: {forbidden}")
+
+    experimental_markers = [
+        RELEASE,
+        FLASHINFER_EXPERIMENTAL,
+        "git apply --check /tmp/vllm-pr46329-v0.25.1.diff",
+        "0.25.1-kv-exp",
+    ]
+    for marker in experimental_markers:
+        if marker not in experimental_dockerfile:
+            failures.append(f"experimental Dockerfile marker missing: {marker}")
+
+    if experimental.get("vllm_commit") != RELEASE:
+        failures.append("experimental runtime manifest vLLM commit mismatch")
+    if experimental.get("vllm_tag") != "v0.25.1":
+        failures.append("experimental runtime manifest vLLM tag mismatch")
+    if experimental.get("flashinfer_commit") != FLASHINFER_EXPERIMENTAL:
+        failures.append("experimental runtime manifest FlashInfer commit mismatch")
+    if production.get("profile") != "production-fp8":
+        failures.append("production runtime manifest profile mismatch")
+    if production.get("vllm_commit") != RELEASE:
+        failures.append("production runtime manifest vLLM commit mismatch")
+    if production.get("vllm_tag") != "v0.25.1":
+        failures.append("production runtime manifest vLLM tag mismatch")
+    if production.get("flashinfer_version") != FLASHINFER_PRODUCTION:
+        failures.append("production runtime manifest FlashInfer version mismatch")
+    if production.get("nvfp4_kv_enabled") is not False:
+        failures.append("production runtime manifest must disable NVFP4 KV")
+    if production.get("default_kv_cache_dtype") != "fp8":
+        failures.append("production runtime manifest must default to FP8 KV")
+    for name, runtime in (("experimental", experimental), ("production", production)):
+        if runtime.get("model_revision") != MODEL:
+            failures.append(f"{name} runtime manifest model revision mismatch")
     return failures
 
 
@@ -110,7 +146,7 @@ def main() -> int:
         for failure in failures:
             print(f"- {failure}")
         return 1
-    print("BACKPORT_VERIFY_PASS: 7 commits, 7 paths, exact release and artifact pins")
+    print("BACKPORT_VERIFY_PASS: production FP8 isolated from experimental NVFP4-KV; exact pins verified")
     return 0
 
 

@@ -1,13 +1,12 @@
 # =============================================================================
-# Qwen3.6-27B SM121 NVFP4 runtime
-# vLLM v0.25.1 + reviewed PR #46329 release port + FlashInfer PR #3684
+# Qwen3.6-27B SM121 production runtime
+# vLLM v0.25.1 + native calibrated W4A4 reroute + FP8 KV
 # =============================================================================
 
 FROM ubuntu:24.04 AS builder
 
 ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
 ARG VLLM_TAG=v0.25.1
-ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
@@ -62,18 +61,8 @@ RUN python3 -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu130 \
         -r requirements/build/cuda.txt
 
-# Install the exact open FlashInfer PR head after release dependencies so the
-# SM120/121 FA2 NVFP4-KV implementation cannot be overwritten by PyPI 0.6.13.
-RUN git clone --filter=blob:none https://github.com/jethac/flashinfer.git /workspace/flashinfer-src \
-    && git -C /workspace/flashinfer-src checkout --detach ${FLASHINFER_COMMIT} \
-    && test "$(git -C /workspace/flashinfer-src rev-parse HEAD)" = "${FLASHINFER_COMMIT}" \
-    && python3 -m pip install --no-deps /workspace/flashinfer-src
-
-COPY docker/vllm-pr46329-v0.25.1.diff /tmp/vllm-pr46329-v0.25.1.diff
 COPY docker/native-w4a4-qwen27-v0.25.1.diff /tmp/native-w4a4-qwen27-v0.25.1.diff
-RUN git apply --check /tmp/vllm-pr46329-v0.25.1.diff \
-    && git apply /tmp/vllm-pr46329-v0.25.1.diff \
-    && git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff \
+RUN git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff \
     && git apply /tmp/native-w4a4-qwen27-v0.25.1.diff \
     && git diff --check
 
@@ -86,7 +75,7 @@ import importlib.metadata as md
 import subprocess
 import torch
 assert md.version("vllm") == "0.25.1", md.version("vllm")
-assert md.version("flashinfer-python") == "0.6.15", md.version("flashinfer-python")
+assert md.version("flashinfer-python") == "0.6.13", md.version("flashinfer-python")
 assert torch.__version__.startswith("2.11.0+cu130"), torch.__version__
 assert torch.version.cuda == "13.0", torch.version.cuda
 assert "release 13.0" in subprocess.check_output(
@@ -101,7 +90,6 @@ FROM ubuntu:24.04 AS runtime
 
 ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
 ARG VLLM_TAG=v0.25.1
-ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
 ARG IMAGE_REVISION=uncommitted
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -111,7 +99,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVCC_THREADS=2 \
     FLASHINFER_NVCC_THREADS=2 \
     R0B0TLAB_QWEN27_NATIVE_W4A4=1 \
-    R0B0TLAB_NVFP4_KV_ENABLED=1
+    R0B0TLAB_NVFP4_KV_ENABLED=0
 ENV PATH=/opt/vllm/bin:${CUDA_HOME}/bin:/usr/local/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
 
@@ -136,20 +124,21 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/
 
 COPY --from=builder /opt/vllm/ /opt/vllm/
 
-LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 NVFP4 vLLM runtime" \
-      org.opencontainers.image.description="vLLM v0.25.1 with reviewed SM120/121 NVFP4-KV backport and calibrated native W4A4 reroute" \
+LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 production vLLM runtime" \
+      org.opencontainers.image.description="vLLM v0.25.1 with supported FlashInfer 0.6.13, calibrated native W4A4 reroute, and FP8 KV" \
       org.opencontainers.image.source="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4" \
       org.opencontainers.image.url="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4" \
       org.opencontainers.image.revision="${IMAGE_REVISION}" \
-      org.opencontainers.image.version="0.25.1-kv-exp" \
+      org.opencontainers.image.version="0.25.1-production" \
       org.opencontainers.image.licenses="MIT AND Apache-2.0" \
       io.r0b0tlab.upstream.vllm.revision="${VLLM_COMMIT}" \
       io.r0b0tlab.upstream.vllm.tag="${VLLM_TAG}" \
-      io.r0b0tlab.upstream.flashinfer.revision="${FLASHINFER_COMMIT}" \
+      io.r0b0tlab.upstream.flashinfer.version="0.6.13" \
+      io.r0b0tlab.profile="production-fp8" \
       io.r0b0tlab.model.id="nvidia/Qwen3.6-27B-NVFP4" \
       io.r0b0tlab.model.revision="0893e1606ff3d5f97a441f405d5fc541a6bdf404"
 
-COPY docker/runtime-manifest.json /opt/r0b0tlab/runtime-manifest.json
+COPY docker/runtime-manifest.production.json /opt/r0b0tlab/runtime-manifest.json
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/audit_runtime.py /usr/local/bin/audit_runtime.py
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py \

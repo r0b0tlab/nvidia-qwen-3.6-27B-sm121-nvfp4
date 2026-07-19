@@ -173,6 +173,7 @@ vllm:spec_decode_num_accepted_tokens_total{request_id="a",model_name="demo-model
             ["--model", "demo-model", "--container-name", "run-owned-container"]
         )
         self.assertEqual(args.concurrency, list(harness.CONCURRENCY_LEVELS))
+        self.assertIn(2, args.concurrency)
         self.assertEqual(args.repeats, 3)
         self.assertEqual(args.warmup, 1)
         self.assertTrue(args.include_usage)

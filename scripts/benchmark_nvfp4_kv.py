@@ -40,7 +40,7 @@ SANITY_PROMPTS = [
     ("instruction", "List exactly three colors of the rainbow, comma-separated, nothing else.", 32),
 ]
 BENCH_PROMPT = "Write a compact Python function that returns the nth Fibonacci number. Code only."
-CONCURRENCY_LEVELS = (1, 4, 8, 16, 32)
+CONCURRENCY_LEVELS = (1, 2, 4, 8, 16, 32)
 
 PROMETHEUS_COUNTERS = {
     "prompt_tokens": "vllm:prompt_tokens_total",

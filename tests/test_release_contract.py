@@ -76,6 +76,12 @@ class ReleaseContractTests(unittest.TestCase):
         builder_audit = text.index("RUN python3 - <<'PY'", installed_audit_context)
         self.assertLess(derivative_install, installed_audit_context)
         self.assertLess(installed_audit_context, builder_audit)
+        builder_block = text[builder_audit : text.index("FROM ubuntu:24.04 AS runtime")]
+        self.assertIn("BUILDER_STATIC_ELF_AUDIT_PASS", builder_block)
+        self.assertIn('subprocess.check_output(["readelf", "-h", extension]', builder_block)
+        self.assertNotIn("import vllm._C_stable_libtorch", builder_block)
+        runtime_audit = (ROOT / "scripts" / "audit_runtime.py").read_text()
+        self.assertIn('("vllm._C_stable_libtorch", "vllm._moe_C_stable_libtorch")', runtime_audit)
         runtime = json.loads((ROOT / "docker" / "runtime-manifest.production.json").read_text())
         self.assertEqual(runtime["profile"], "production-fp8")
         self.assertEqual(runtime["vllm_package_version"], "0.25.1+r0b0tlab.w4a4.1")

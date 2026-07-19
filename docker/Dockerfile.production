@@ -92,6 +92,7 @@ WORKDIR /
 # assertion changes or fails, a retry must not discard the completed compile.
 RUN python3 - <<'PY'
 import importlib.metadata as md
+from pathlib import Path
 import subprocess
 import torch
 assert md.version("vllm") == "0.25.1+r0b0tlab.w4a4.1", md.version("vllm")
@@ -101,9 +102,18 @@ assert torch.version.cuda == "13.0", torch.version.cuda
 assert "release 13.0" in subprocess.check_output(
     ["/usr/local/cuda-13.0/bin/nvcc", "--version"], text=True
 )
-import vllm._C_stable_libtorch  # noqa: F401
-import vllm._moe_C_stable_libtorch  # noqa: F401
-print("BUILDER_AUDIT_PASS")
+vllm_root = Path(md.distribution("vllm").locate_file("vllm"))
+for stem, minimum_size in (
+    ("_C_stable_libtorch", 100_000_000),
+    ("_moe_C_stable_libtorch", 20_000_000),
+):
+    matches = list(vllm_root.glob(f"{stem}.*.so"))
+    assert len(matches) == 1, (stem, matches)
+    extension = matches[0]
+    assert extension.stat().st_size >= minimum_size, (extension, extension.stat().st_size)
+    elf_header = subprocess.check_output(["readelf", "-h", extension], text=True)
+    assert "Machine:" in elf_header and "AArch64" in elf_header, elf_header
+print("BUILDER_STATIC_ELF_AUDIT_PASS")
 PY
 
 FROM ubuntu:24.04 AS runtime

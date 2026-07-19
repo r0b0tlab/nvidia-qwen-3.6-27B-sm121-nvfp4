@@ -84,6 +84,10 @@ RUN test "$(git diff --name-only)" = "vllm/model_executor/layers/quantization/mo
     && test -z "$(git status --porcelain --untracked-files=no)" \
     && python3 -m pip install --no-build-isolation --no-deps .
 
+# Audit the installed wheel, not the source-tree package at /workspace/vllm-src.
+# Otherwise Python shadows site-packages/vllm and cannot resolve its native .so files.
+WORKDIR /
+
 # Keep the expensive wheel build in its own cacheable layer. If an identity
 # assertion changes or fails, a retry must not discard the completed compile.
 RUN python3 - <<'PY'

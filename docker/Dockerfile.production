@@ -120,7 +120,6 @@ FROM ubuntu:24.04 AS runtime
 
 ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
 ARG VLLM_TAG=v0.25.1
-ARG IMAGE_REVISION=uncommitted
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
@@ -154,6 +153,8 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/
 
 COPY --from=builder /opt/vllm/ /opt/vllm/
 
+# Revision-only metadata must not invalidate the expensive runtime layers above.
+ARG IMAGE_REVISION=uncommitted
 LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 production vLLM runtime" \
       org.opencontainers.image.description="vLLM v0.25.1 with supported FlashInfer 0.6.13, calibrated native W4A4 reroute, and FP8 KV" \
       org.opencontainers.image.source="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4" \

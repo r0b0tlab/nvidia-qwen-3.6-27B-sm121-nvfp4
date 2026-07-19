@@ -90,6 +90,8 @@ def validate(root: Path) -> list[str]:
             failures.append(f"production Dockerfile marker missing: {marker}")
     production_markers = [
         'md.version("flashinfer-python") == "0.6.13"',
+        'md.version("vllm") == "0.25.1+r0b0tlab.w4a4.1"',
+        'git tag "v0.25.1+r0b0tlab.w4a4.1"',
         "R0B0TLAB_NVFP4_KV_ENABLED=0",
         'io.r0b0tlab.profile="production-fp8"',
         "runtime-manifest.production.json",
@@ -124,6 +126,10 @@ def validate(root: Path) -> list[str]:
         failures.append("production runtime manifest vLLM commit mismatch")
     if production.get("vllm_tag") != "v0.25.1":
         failures.append("production runtime manifest vLLM tag mismatch")
+    if production.get("vllm_package_version") != "0.25.1+r0b0tlab.w4a4.1":
+        failures.append("production runtime manifest vLLM package version mismatch")
+    if production.get("vllm_derivative_tag") != "v0.25.1+r0b0tlab.w4a4.1":
+        failures.append("production runtime manifest vLLM derivative tag mismatch")
     if production.get("flashinfer_version") != FLASHINFER_PRODUCTION:
         failures.append("production runtime manifest FlashInfer version mismatch")
     if production.get("nvfp4_kv_enabled") is not False:

@@ -68,13 +68,29 @@ RUN git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff \
 
 RUN python3 -m pip install --no-build-isolation --no-deps .
 
+# Convert the reviewed one-file patch into a deterministic derivative commit and
+# exact PEP 440 local-version tag. The first install owns the native compile;
+# this second pass reuses its build products and makes package provenance
+# truthful instead of presenting a dirty release tree as upstream 0.25.1.
+RUN test "$(git diff --name-only)" = "vllm/model_executor/layers/quantization/modelopt.py" \
+    && git config user.name "r0b0tlab release builder" \
+    && git config user.email "r0b0tlab-release-builder" \
+    && git add vllm/model_executor/layers/quantization/modelopt.py \
+    && GIT_AUTHOR_DATE="2026-07-19T00:00:00Z" \
+       GIT_COMMITTER_DATE="2026-07-19T00:00:00Z" \
+       git commit -m "Apply Qwen3.6-27B native W4A4 reroute" \
+    && git tag "v0.25.1+r0b0tlab.w4a4.1" \
+    && test "$(git describe --tags --exact-match HEAD)" = "v0.25.1+r0b0tlab.w4a4.1" \
+    && test -z "$(git status --porcelain --untracked-files=no)" \
+    && python3 -m pip install --no-build-isolation --no-deps .
+
 # Keep the expensive wheel build in its own cacheable layer. If an identity
 # assertion changes or fails, a retry must not discard the completed compile.
 RUN python3 - <<'PY'
 import importlib.metadata as md
 import subprocess
 import torch
-assert md.version("vllm") == "0.25.1", md.version("vllm")
+assert md.version("vllm") == "0.25.1+r0b0tlab.w4a4.1", md.version("vllm")
 assert md.version("flashinfer-python") == "0.6.13", md.version("flashinfer-python")
 assert torch.__version__.startswith("2.11.0+cu130"), torch.__version__
 assert torch.version.cuda == "13.0", torch.version.cuda
@@ -133,6 +149,8 @@ LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 production vLLM runtime"
       org.opencontainers.image.licenses="MIT AND Apache-2.0" \
       io.r0b0tlab.upstream.vllm.revision="${VLLM_COMMIT}" \
       io.r0b0tlab.upstream.vllm.tag="${VLLM_TAG}" \
+      io.r0b0tlab.vllm.package.version="0.25.1+r0b0tlab.w4a4.1" \
+      io.r0b0tlab.vllm.derivative.tag="v0.25.1+r0b0tlab.w4a4.1" \
       io.r0b0tlab.upstream.flashinfer.version="0.6.13" \
       io.r0b0tlab.profile="production-fp8" \
       io.r0b0tlab.model.id="nvidia/Qwen3.6-27B-NVFP4" \

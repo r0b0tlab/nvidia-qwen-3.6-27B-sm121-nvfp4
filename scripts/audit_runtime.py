@@ -14,6 +14,7 @@ from typing import Any
 
 EXPECTED = {
     "vllm": "0.25.1",
+    "vllm_package": "0.25.1+r0b0tlab.w4a4.1",
     "vllm_tag": "v0.25.1",
     "vllm_commit": "752a3a504485790a2e8491cacbb35c137339ad34",
     "model_revision": "0893e1606ff3d5f97a441f405d5fc541a6bdf404",
@@ -36,8 +37,9 @@ def main() -> int:
     profile = manifest.get("profile")
     nvfp4_enabled = manifest.get("nvfp4_kv_enabled") is True
     expected_flashinfer = manifest.get("flashinfer_version")
-    add("manifest_profile", profile in {"production-fp8", "experimental-nvfp4-kv"}, profile)
+    add("manifest_profile", profile == "production-fp8", profile)
     add("manifest_vllm_version", manifest.get("vllm_version") == EXPECTED["vllm"], manifest.get("vllm_version"))
+    add("manifest_vllm_package", manifest.get("vllm_package_version") == EXPECTED["vllm_package"], manifest.get("vllm_package_version"))
     add("manifest_vllm_tag", manifest.get("vllm_tag") == EXPECTED["vllm_tag"], manifest.get("vllm_tag"))
     add("manifest_vllm_commit", manifest.get("vllm_commit") == EXPECTED["vllm_commit"], manifest.get("vllm_commit"))
     add("manifest_model_revision", manifest.get("model_revision") == EXPECTED["model_revision"], manifest.get("model_revision"))
@@ -53,13 +55,13 @@ def main() -> int:
 
         version = metadata.version("vllm")
         flashinfer_version = metadata.version("flashinfer-python")
-        add("vllm_version", version == EXPECTED["vllm"], version)
+        add("vllm_version", version == EXPECTED["vllm_package"], version)
         add("flashinfer_version", flashinfer_version == expected_flashinfer, flashinfer_version)
         add("torch_version", torch.__version__.startswith("2.11.0+cu130"), torch.__version__)
         add("torch_cuda", torch.version.cuda == "13.0", torch.version.cuda)
         capability = torch.cuda.get_device_capability()
         add("cuda_capability", capability == (12, 1), capability)
-        add("vllm_module_version", getattr(vllm, "__version__", None) == EXPECTED["vllm"], getattr(vllm, "__version__", None))
+        add("vllm_module_version", getattr(vllm, "__version__", None) == EXPECTED["vllm_package"], getattr(vllm, "__version__", None))
     except Exception as exc:
         add("core_imports", False, repr(exc))
 

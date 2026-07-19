@@ -73,6 +73,8 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn('md.version("flashinfer-python") == "0.6.13"', text)
         runtime = json.loads((ROOT / "docker" / "runtime-manifest.production.json").read_text())
         self.assertEqual(runtime["profile"], "production-fp8")
+        self.assertEqual(runtime["vllm_package_version"], "0.25.1+r0b0tlab.w4a4.1")
+        self.assertEqual(runtime["vllm_derivative_tag"], "v0.25.1+r0b0tlab.w4a4.1")
         self.assertFalse(runtime["nvfp4_kv_enabled"])
         self.assertEqual(runtime["default_kv_cache_dtype"], "fp8")
 

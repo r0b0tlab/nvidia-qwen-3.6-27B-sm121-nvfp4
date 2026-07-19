@@ -76,6 +76,7 @@ def validate(root: Path) -> list[str]:
         "MAX_JOBS=6",
         "NVCC_THREADS=2",
         "FLASHINFER_NVCC_THREADS=2",
+        "VLLM_VERSION_OVERRIDE=0.25.1",
         "--no-build-isolation --no-deps .",
         "git apply --check /tmp/vllm-pr46329-v0.25.1.diff",
         "git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff",

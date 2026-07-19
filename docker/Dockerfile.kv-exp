@@ -72,7 +72,7 @@ RUN git apply --check /tmp/vllm-pr46329-v0.25.1.diff \
     && git apply /tmp/native-w4a4-qwen27-v0.25.1.diff \
     && git diff --check
 
-RUN python3 -m pip install --no-build-isolation --no-deps . \
+RUN VLLM_VERSION_OVERRIDE=0.25.1 python3 -m pip install --no-build-isolation --no-deps . \
     && python3 - <<'PY'
 import importlib.metadata as md
 import subprocess

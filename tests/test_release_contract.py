@@ -29,6 +29,10 @@ class ReleaseContractTests(unittest.TestCase):
             failures = validate(clone)
             self.assertTrue(any("vLLM commit mismatch" in x for x in failures))
 
+    def test_exact_release_version_override_is_pinned(self) -> None:
+        dockerfile = (ROOT / "docker" / "Dockerfile.kv-exp").read_text()
+        self.assertIn("VLLM_VERSION_OVERRIDE=0.25.1", dockerfile)
+
     def test_patch_scope_mutation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             clone = Path(tmp) / "repo"

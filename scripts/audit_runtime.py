@@ -99,18 +99,20 @@ def main() -> int:
     else:
         add("nvcc_13_0", False, "not on PATH")
 
+    dependency_checker = shutil.which("check_dependencies.py")
+    add("dependency_checker_on_path", bool(dependency_checker), dependency_checker)
     try:
-        pip_check = subprocess.run(
-            [sys.executable, "-m", "pip", "check"],
+        dependency_check = subprocess.run(
+            [dependency_checker] if dependency_checker else ["/missing/check_dependencies.py"],
             text=True,
             capture_output=True,
             timeout=120,
             check=False,
         )
-        pip_detail = (pip_check.stdout or pip_check.stderr).strip()
-        add("pip_check", pip_check.returncode == 0, pip_detail)
+        dependency_detail = (dependency_check.stdout or dependency_check.stderr).strip()
+        add("dependency_check", dependency_check.returncode == 0, dependency_detail)
     except Exception as exc:
-        add("pip_check", False, repr(exc))
+        add("dependency_check", False, repr(exc))
 
     try:
         import vllm.model_executor.layers.quantization.modelopt as modelopt

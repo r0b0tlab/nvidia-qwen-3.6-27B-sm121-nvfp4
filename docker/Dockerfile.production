@@ -173,9 +173,10 @@ LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 production vLLM runtime"
 COPY docker/runtime-manifest.production.json /opt/r0b0tlab/runtime-manifest.json
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/audit_runtime.py /usr/local/bin/audit_runtime.py
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py \
+COPY scripts/check_dependencies.py /usr/local/bin/check_dependencies.py
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py /usr/local/bin/check_dependencies.py \
     && command -v vllm \
     && python3 -c 'import importlib.metadata as md; assert md.version("vllm") == "0.25.1+r0b0tlab.w4a4.1", md.version("vllm")' \
-    && python3 -m pip check
+    && /usr/local/bin/check_dependencies.py
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

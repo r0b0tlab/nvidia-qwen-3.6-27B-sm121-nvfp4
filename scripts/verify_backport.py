@@ -43,6 +43,7 @@ def validate(root: Path) -> list[str]:
     native_patch = (docker / "native-w4a4-qwen27-v0.25.1.diff").read_text()
     experimental_dockerfile = (docker / "Dockerfile.kv-exp").read_text()
     production_dockerfile = (docker / "Dockerfile.production").read_text()
+    dependency_checker = (root / "scripts" / "check_dependencies.py").read_text()
 
     if eq.get("release_base") != RELEASE:
         failures.append("equivalence release_base mismatch")
@@ -95,6 +96,7 @@ def validate(root: Path) -> list[str]:
         "R0B0TLAB_NVFP4_KV_ENABLED=0",
         'io.r0b0tlab.profile="production-fp8"',
         "runtime-manifest.production.json",
+        "check_dependencies.py",
         "0.25.1-production",
     ]
     for marker in production_markers:
@@ -103,6 +105,14 @@ def validate(root: Path) -> list[str]:
     for forbidden in (FLASHINFER_EXPERIMENTAL, "vllm-pr46329-v0.25.1.diff", "0.25.1-kv-exp"):
         if forbidden in production_dockerfile:
             failures.append(f"experimental marker leaked into production Dockerfile: {forbidden}")
+    for marker in (
+        "nvidia-cusparselt-cu13 0.8.0 is not supported on this platform",
+        "Tag: py3-none-manylinux2014_sbsa",
+        'machine != "aarch64"',
+        '"AArch64" not in elf_header',
+    ):
+        if marker not in dependency_checker:
+            failures.append(f"strict dependency checker marker missing: {marker}")
 
     experimental_markers = [
         RELEASE,

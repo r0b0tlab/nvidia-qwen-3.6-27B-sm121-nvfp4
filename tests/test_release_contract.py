@@ -85,6 +85,9 @@ class ReleaseContractTests(unittest.TestCase):
         runtime_stage = text[text.index("FROM ubuntu:24.04 AS runtime") :]
         self.assertNotIn("&& vllm --version", runtime_stage)
         self.assertIn('import importlib.metadata as md; assert md.version("vllm")', runtime_stage)
+        self.assertIn("COPY scripts/check_dependencies.py /usr/local/bin/check_dependencies.py", runtime_stage)
+        self.assertIn("/usr/local/bin/check_dependencies.py", runtime_stage)
+        self.assertNotIn("python3 -m pip check", runtime_stage)
         runtime = json.loads((ROOT / "docker" / "runtime-manifest.production.json").read_text())
         self.assertEqual(runtime["profile"], "production-fp8")
         self.assertEqual(runtime["vllm_package_version"], "0.25.1+r0b0tlab.w4a4.1")

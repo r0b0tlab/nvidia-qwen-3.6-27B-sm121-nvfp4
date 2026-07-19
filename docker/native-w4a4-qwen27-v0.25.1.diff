@@ -1,0 +1,26 @@
+diff --git a/vllm/model_executor/layers/quantization/modelopt.py b/vllm/model_executor/layers/quantization/modelopt.py
+index 76afd9344..cfee21b57 100644
+--- a/vllm/model_executor/layers/quantization/modelopt.py
++++ b/vllm/model_executor/layers/quantization/modelopt.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ from fnmatch import fnmatch
+ from typing import TYPE_CHECKING, Any, cast
+ 
+@@ -2525,6 +2526,13 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfigBase):
+             if quant_algo == "NVFP4":
+                 return ModelOptNvFp4LinearMethod(self.nvfp4_config)
+             if quant_algo == "W4A16_NVFP4":
++                if os.getenv("R0B0TLAB_QWEN27_NATIVE_W4A4") == "1":
++                    logger.warning_once(
++                        "R0B0TLAB_NATIVE_W4A4_FROM_W4A16: using calibrated "
++                        "input_scale tensors with the native NVFP4 W4A4 linear "
++                        "kernel for nvidia/Qwen3.6-27B-NVFP4."
++                    )
++                    return ModelOptNvFp4LinearMethod(self.nvfp4_config)
+                 return ModelOptNvFp4W4A16LinearMethod(self.w4a16_nvfp4_config)
+             if quant_algo == "MXFP8":
+                 return ModelOptMxFp8LinearMethod(self.mxfp8_config)

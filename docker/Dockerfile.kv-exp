@@ -1,97 +1,150 @@
 # =============================================================================
-# SM121 NVFP4 KV CACHE EXPERIMENTAL BUILD
-# vLLM v0.24.0 + FlashInfer PR #3684 + vLLM PR #46329
+# Qwen3.6-27B SM121 NVFP4 runtime
+# vLLM v0.25.1 + reviewed PR #46329 release port + FlashInfer PR #3684
 # =============================================================================
 
-# ─── Builder stage: compile vLLM v0.24.0 from source ─────────────────────────
 FROM ubuntu:24.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=UTC
+ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
+ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git python3.12 python3.12-dev python3.12-venv python3-pip \
-        wget ca-certificates gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        cuda-toolkit-13-0 cuda-nvcc-13-0 cuda-cudart-dev-13-0 cuda-libraries-dev-13-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV CUDA_HOME=/usr/local/cuda
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    CUDA_HOME=/usr/local/cuda-13.0 \
+    TORCH_CUDA_ARCH_LIST=12.1 \
+    VLLM_TARGET_DEVICE=cuda \
+    VLLM_USE_PRECOMPILED=0 \
+    MAX_JOBS=6 \
+    NVCC_THREADS=2
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
 
-RUN pip3 install --upgrade pip setuptools wheel pybind11 ninja --break-system-packages --ignore-installed
-RUN pip3 install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git pkg-config python3.12 python3.12-dev \
+        python3.12-venv python3-pip wget ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Build FlashInfer from PR #3684 branch (has NVFP4 KV FA2 SM120/121 kernels)
-RUN git clone --depth=50 --branch nvfp4-vosplit-rederive https://github.com/jethac/flashinfer.git /workspace/flashinfer-src
-WORKDIR /workspace/flashinfer-src
-ENV TORCH_CUDA_ARCH_LIST="12.1"
-RUN pip3 install --no-cache-dir -v --break-system-packages . 2>&1 | tail -20 || \
-    (echo "FlashInfer build failed, trying pip install" && \
-     pip3 install --break-system-packages flashinfer-python && \
-     echo "WARNING: Using PyPI FlashInfer, NVFP4 KV may not work")
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cuda-toolkit-13-0 cuda-nvcc-13-0 cuda-cudart-dev-13-0 \
+        cuda-libraries-dev-13-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(readlink -f /usr/local/cuda)" = "/usr/local/cuda-13.0" \
+    && nvcc --version | grep -F "release 13.0"
 
-# Clone and patch vLLM v0.24.0
-ARG VLLM_VERSION=v0.24.0
-RUN git clone --depth 1 --branch ${VLLM_VERSION} https://github.com/vllm-project/vllm.git /workspace/vllm-src
+RUN python3 -m pip install --break-system-packages --upgrade \
+        pip setuptools wheel packaging \
+    && python3 -m pip install --break-system-packages \
+        torch==2.11.0 torchvision==0.26.0 torchaudio \
+        --index-url https://download.pytorch.org/whl/cu130
+
+RUN git clone --filter=blob:none https://github.com/vllm-project/vllm.git /workspace/vllm-src \
+    && git -C /workspace/vllm-src checkout --detach ${VLLM_COMMIT} \
+    && test "$(git -C /workspace/vllm-src rev-parse HEAD)" = "${VLLM_COMMIT}"
 
 WORKDIR /workspace/vllm-src
 
-# Apply vLLM PR #46329 patch (NVFP4 KV cache on SM120/121)
-COPY docker/vllm-pr46329.diff /tmp/vllm-pr46329.diff
-RUN git apply --whitespace=fix /tmp/vllm-pr46329.diff || \
-    (echo "Patch apply failed, trying with --reject-file" && \
-     git apply --whitespace=fix --reject /tmp/vllm-pr46329.diff; \
-     echo "WARNING: Some hunks rejected, check .rej files")
+# v0.25.1 runtime and build requirements are separate contracts. Torch cu130
+# is installed first so requirements/cuda.txt cannot silently choose another
+# CUDA build.
+RUN python3 -m pip install --break-system-packages \
+        --extra-index-url https://download.pytorch.org/whl/cu130 \
+        -r requirements/cuda.txt \
+    && python3 -m pip install --break-system-packages \
+        --extra-index-url https://download.pytorch.org/whl/cu130 \
+        -r requirements/build/cuda.txt
 
-ENV TORCH_CUDA_ARCH_LIST="12.1"
-ENV VLLM_TARGET_DEVICE=cuda
-ENV MAX_JOBS=6
-ENV NVCC_THREADS=2
-ENV VLLM_USE_PRECOMPILED=0
+# Install the exact open FlashInfer PR head after release dependencies so the
+# SM120/121 FA2 NVFP4-KV implementation cannot be overwritten by PyPI 0.6.13.
+RUN git clone --filter=blob:none https://github.com/jethac/flashinfer.git /workspace/flashinfer-src \
+    && git -C /workspace/flashinfer-src checkout --detach ${FLASHINFER_COMMIT} \
+    && test "$(git -C /workspace/flashinfer-src rev-parse HEAD)" = "${FLASHINFER_COMMIT}" \
+    && python3 -m pip install --break-system-packages --no-deps /workspace/flashinfer-src
 
-RUN pip3 install --no-cache-dir -v --break-system-packages .
+COPY docker/vllm-pr46329-v0.25.1.diff /tmp/vllm-pr46329-v0.25.1.diff
+COPY docker/native-w4a4-qwen27-v0.25.1.diff /tmp/native-w4a4-qwen27-v0.25.1.diff
+RUN git apply --check /tmp/vllm-pr46329-v0.25.1.diff \
+    && git apply /tmp/vllm-pr46329-v0.25.1.diff \
+    && git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff \
+    && git apply /tmp/native-w4a4-qwen27-v0.25.1.diff \
+    && git diff --check
 
-# ─── Runtime stage ───────────────────────────────────────────────────────────
+RUN python3 -m pip install --break-system-packages \
+        --no-build-isolation --no-deps . \
+    && python3 - <<'PY'
+import importlib.metadata as md
+import subprocess
+import torch
+assert md.version("vllm") == "0.25.1", md.version("vllm")
+assert torch.__version__.startswith("2.11.0+cu130"), torch.__version__
+assert torch.version.cuda == "13.0", torch.version.cuda
+assert "release 13.0" in subprocess.check_output(
+    ["/usr/local/cuda-13.0/bin/nvcc", "--version"], text=True
+)
+import vllm._C_stable_libtorch  # noqa: F401
+import vllm._moe_C_stable_libtorch  # noqa: F401
+print("BUILDER_AUDIT_PASS")
+PY
+
 FROM ubuntu:24.04 AS runtime
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=UTC
+ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
+ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
+ARG IMAGE_REVISION=uncommitted
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-dev python3-pip wget ca-certificates gnupg libgomp1 \
-        build-essential ninja-build pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        cuda-cudart-13-0 cuda-libraries-13-0 cuda-nvrtc-13-0 cuda-nvtx-13-0 \
-        cuda-nvcc-13-0 cuda-libraries-dev-13-0 \
-        libcublas-13-0 libcusparse-13-0 libcusolver-13-0 libcurand-13-0 libcufft-13-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    CUDA_HOME=/usr/local/cuda-13.0 \
+    MAX_JOBS=6 \
+    NVCC_THREADS=2 \
+    FLASHINFER_NVCC_THREADS=2 \
+    R0B0TLAB_QWEN27_NATIVE_W4A4=1
+ENV PATH=${CUDA_HOME}/bin:/usr/local/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
 
-RUN pip3 install --upgrade pip --break-system-packages || true
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-dev python3-pip ca-certificates curl wget gnupg \
+        build-essential ninja-build pkg-config libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy ALL Python packages from builder (torch, flashinfer, vllm, and all deps)
+# FlashInfer FA2 JIT requires the compiler and CUDA development headers in the
+# final image, not only in the builder.
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cuda-cudart-13-0 cuda-libraries-13-0 cuda-nvrtc-13-0 cuda-nvtx-13-0 \
+        cuda-nvcc-13-0 cuda-libraries-dev-13-0 libcublas-13-0 \
+        libcusparse-13-0 libcusolver-13-0 libcurand-13-0 libcufft-13-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(readlink -f /usr/local/cuda)" = "/usr/local/cuda-13.0" \
+    && nvcc --version | grep -F "release 13.0"
+
 COPY --from=builder /usr/local/lib/python3.12/dist-packages/ /usr/local/lib/python3.12/dist-packages/
-COPY --from=builder /usr/local/bin/vllm /usr/local/bin/vllm
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
-LABEL org.opencontainers.image.title="SM121 vLLM v0.24.0 NVFP4 KV EXPERIMENTAL"
-LABEL org.opencontainers.image.description="vLLM v0.24.0 + FlashInfer PR #3684 + vLLM PR #46329 — NVFP4 KV cache on SM121"
-LABEL org.opencontainers.image.source="https://github.com/r0b0tlab/qwen36-27b-nvfp4-gb10-native-mtp"
+LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 NVFP4 vLLM runtime" \
+      org.opencontainers.image.description="vLLM v0.25.1 with reviewed SM120/121 NVFP4-KV backport and calibrated native W4A4 reroute" \
+      org.opencontainers.image.source="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4" \
+      org.opencontainers.image.url="https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.version="0.25.1-kv-exp" \
+      org.opencontainers.image.licenses="MIT AND Apache-2.0" \
+      io.r0b0tlab.upstream.vllm.revision="${VLLM_COMMIT}" \
+      io.r0b0tlab.upstream.flashinfer.revision="${FLASHINFER_COMMIT}" \
+      io.r0b0tlab.model.id="nvidia/Qwen3.6-27B-NVFP4" \
+      io.r0b0tlab.model.revision="0893e1606ff3d5f97a441f405d5fc541a6bdf404"
 
+COPY docker/runtime-manifest.json /opt/r0b0tlab/runtime-manifest.json
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/audit_runtime.py /usr/local/bin/audit_runtime.py
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py \
+    && command -v vllm \
+    && vllm --version \
+    && python3 -m pip check
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

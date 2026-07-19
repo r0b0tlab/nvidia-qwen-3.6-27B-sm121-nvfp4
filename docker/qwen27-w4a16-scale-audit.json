@@ -1,0 +1,19 @@
+{
+  "utc": "2026-07-19T18:04:30.841937+00:00",
+  "model_revision": "0893e1606ff3d5f97a441f405d5fc541a6bdf404",
+  "targets": 193,
+  "expected_target_pattern": "64 layers x 3 MLP projections + lm_head = 193",
+  "required_tensors_per_target": [
+    "weight",
+    "weight_scale",
+    "weight_scale_2",
+    "input_scale"
+  ],
+  "missing": [],
+  "input_scale_values": 193,
+  "input_scale_min": 0.0016276042442768812,
+  "input_scale_max": 0.2053571492433548,
+  "nonfinite": 0,
+  "nonpositive": 0,
+  "status": "PASS"
+}

@@ -1,12 +1,16 @@
 diff --git a/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu b/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu
-index 693d55f231ee..b6543b410e0a 100644
+index 693d55f23..8144dffb8 100644
 --- a/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu
 +++ b/csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu
-@@ -64,7 +64,9 @@ __global__ void reshape_and_cache_nvfp4_kernel(
+@@ -62,9 +62,11 @@ __global__ void reshape_and_cache_nvfp4_kernel(
+     const int64_t data_block_stride,         // data cache stride for dim 0
+     const int64_t data_head_stride,          // data cache stride for heads
      const int64_t data_block_offset_stride,  // data cache stride for tokens
-     const int64_t scale_block_stride,        // scale cache stride for dim 0
-     const int64_t scale_head_stride,         // scale cache stride for heads
+-    const int64_t scale_block_stride,        // scale cache stride for dim 0
+-    const int64_t scale_head_stride,         // scale cache stride for heads
 -    const int64_t scale_block_offset_stride  // scale cache stride for tokens
++    const int64_t scale_block_stride,         // scale cache stride for dim 0
++    const int64_t scale_head_stride,          // scale cache stride for heads
 +    const int64_t scale_block_offset_stride,  // scale cache stride for tokens
 +    const bool swizzle_v_sf  // V scale layout: true = SM100 trtllm-gen 4-token
 +                             // swizzle; false = linear (FlashInfer FA2 sm12x)
@@ -31,135 +35,42 @@ index 693d55f231ee..b6543b410e0a 100644
            scale_dst = scale_block + head * scale_head_stride +
                        block_offset * scale_block_offset_stride + scale_idx;
          } else {
-@@ -207,41 +211,70 @@ void reshape_and_cache_nvfp4_dispatch(torch::stable::Tensor& key,
+@@ -207,9 +211,18 @@ void reshape_and_cache_nvfp4_dispatch(torch::stable::Tensor& key,
  
    STD_TORCH_CHECK(head_size % 16 == 0,
                    "head_size must be divisible by 16 for NVFP4 KV cache");
 -  STD_TORCH_CHECK(block_size % 4 == 0,
 -                  "block_size must be divisible by 4 for NVFP4 KV cache "
 -                  "swizzle");
--
--  // Detect physical layout from strides (based on full_dim).
--  // HND: head stride > block_offset stride.
--  bool is_hnd = key_cache.stride(2) > key_cache.stride(1);
--
--  int64_t data_block_stride = key_cache.stride(0);  // page_bytes
--  int64_t data_head_stride, data_block_offset_stride;
--  if (is_hnd) {
--    data_head_stride = (int64_t)block_size * data_dim;
--    data_block_offset_stride = data_dim;
--  } else {
 +
 +  // SM120/SM121 (consumer Blackwell) serve NVFP4 KV via the FlashInfer FA2
-+  // paged reader, which derives the scale-factor stride as data_stride/8 and
-+  // reads V scales linearly. That requires a contiguous [all-data | all-SF]
-+  // page layout (NHD), not the SM100 trtllm-gen per-page [data|scale]
-+  // interleave with the 4-token V swizzle. Select the layout by arch.
-+  const bool contiguous_layout = get_device_prop()->major >= 12;
-+  const bool swizzle_v_sf = !contiguous_layout;
++  // paged reader, which takes the scale-factor strides from the SF tensor
++  // itself and reads V scales linearly; the SM100 trtllm-gen reader keeps
++  // its 4-token V scale swizzle. Both consume the same per-page
++  // [K_data | K_scale | V_data | V_scale] layout, so only the V-scale
++  // swizzle is arch-conditional.
++  const bool swizzle_v_sf = get_device_prop()->major < 12;
 +
 +  STD_TORCH_CHECK(!swizzle_v_sf || block_size % 4 == 0,
 +                  "block_size must be divisible by 4 for NVFP4 KV cache V "
 +                  "scale-factor swizzle (SM100 trtllm-gen path)");
-+
-+  uint8_t* key_data_cache;
-+  uint8_t* value_data_cache;
-+  uint8_t* key_scale_ptr;
-+  uint8_t* value_scale_ptr;
-+  int64_t data_block_stride, data_head_stride, data_block_offset_stride;
-+  int64_t scale_block_stride, scale_head_stride, scale_block_offset_stride;
-+
-+  if (contiguous_layout) {
-+    // One contiguous data region (num_blocks, 2, block, heads, data_dim) in NHD
-+    // order, followed by one contiguous SF region (..., scale_dim). K/V are
-+    // dim 1; the per-block stride spans both sides so sf_stride == data_stride/8
-+    // holds for each side (matches nvfp4_kv_cache_split_views global split).
-+    int64_t num_blocks = key_cache.size(0);
-+    uint8_t* buf = key_cache.mutable_data_ptr<uint8_t>();
-+    int64_t kv_data_off = (int64_t)block_size * num_heads * data_dim;
-+    int64_t kv_scale_off = (int64_t)block_size * num_heads * scale_dim;
-+    int64_t data_count = num_blocks * 2 * kv_data_off;
-+    key_data_cache = buf;
-+    value_data_cache = buf + kv_data_off;
-+    key_scale_ptr = buf + data_count;
-+    value_scale_ptr = buf + data_count + kv_scale_off;
-+    data_block_stride = 2 * kv_data_off;
-     data_head_stride = data_dim;
-     data_block_offset_stride = (int64_t)num_heads * data_dim;
--  }
--
--  // Page layout: [K_data | K_scale | V_data | V_scale]
--  // Scale follows data within each KV side.
--  int64_t data_per_kv = (int64_t)num_heads * block_size * data_dim;
--
--  uint8_t* key_scale_ptr = key_cache.mutable_data_ptr<uint8_t>() + data_per_kv;
--  uint8_t* value_scale_ptr =
--      value_cache.mutable_data_ptr<uint8_t>() + data_per_kv;
--
--  // Scale strides: same page stride, inner strides from layout.
--  int64_t scale_block_stride = data_block_stride;
--  int64_t scale_head_stride, scale_block_offset_stride;
--  if (is_hnd) {
--    scale_head_stride = (int64_t)block_size * scale_dim;
--    scale_block_offset_stride = scale_dim;
--  } else {
-+    scale_block_stride = 2 * kv_scale_off;
-     scale_head_stride = scale_dim;
-     scale_block_offset_stride = (int64_t)num_heads * scale_dim;
-+  } else {
-+    // SM100 trtllm-gen per-page layout: [K_data | K_scale | V_data | V_scale].
-+    bool is_hnd = key_cache.stride(2) > key_cache.stride(1);
-+    data_block_stride = key_cache.stride(0);  // page_bytes
-+    if (is_hnd) {
-+      data_head_stride = (int64_t)block_size * data_dim;
-+      data_block_offset_stride = data_dim;
-+    } else {
-+      data_head_stride = data_dim;
-+      data_block_offset_stride = (int64_t)num_heads * data_dim;
-+    }
-+    int64_t data_per_kv = (int64_t)num_heads * block_size * data_dim;
-+    key_data_cache = key_cache.mutable_data_ptr<uint8_t>();
-+    value_data_cache = value_cache.mutable_data_ptr<uint8_t>();
-+    key_scale_ptr = key_cache.mutable_data_ptr<uint8_t>() + data_per_kv;
-+    value_scale_ptr = value_cache.mutable_data_ptr<uint8_t>() + data_per_kv;
-+    scale_block_stride = data_block_stride;
-+    if (is_hnd) {
-+      scale_head_stride = (int64_t)block_size * scale_dim;
-+      scale_block_offset_stride = scale_dim;
-+    } else {
-+      scale_head_stride = scale_dim;
-+      scale_block_offset_stride = (int64_t)num_heads * scale_dim;
-+    }
-   }
  
-   const float* k_scale_ptr = k_scale.const_data_ptr<float>();
-@@ -265,13 +298,12 @@ void reshape_and_cache_nvfp4_dispatch(torch::stable::Tensor& key,
-         vllm::reshape_and_cache_nvfp4_kernel<scalar_t>
-             <<<grid, block, 0, stream>>>(
-                 key.const_data_ptr<scalar_t>(),
--                value.const_data_ptr<scalar_t>(),
--                key_cache.mutable_data_ptr<uint8_t>(),
--                value_cache.mutable_data_ptr<uint8_t>(), key_scale_ptr,
--                value_scale_ptr, slot_mapping.const_data_ptr<int64_t>(),
--                k_scale_ptr, v_scale_ptr, key.stride(0), value.stride(0),
--                num_heads, head_size, block_size, data_block_stride,
--                data_head_stride, data_block_offset_stride, scale_block_stride,
+   // Detect physical layout from strides (based on full_dim).
+   // HND: head stride > block_offset stride.
+@@ -272,6 +285,6 @@ void reshape_and_cache_nvfp4_dispatch(torch::stable::Tensor& key,
+                 k_scale_ptr, v_scale_ptr, key.stride(0), value.stride(0),
+                 num_heads, head_size, block_size, data_block_stride,
+                 data_head_stride, data_block_offset_stride, scale_block_stride,
 -                scale_head_stride, scale_block_offset_stride);
-+                value.const_data_ptr<scalar_t>(), key_data_cache,
-+                value_data_cache, key_scale_ptr, value_scale_ptr,
-+                slot_mapping.const_data_ptr<int64_t>(), k_scale_ptr, v_scale_ptr,
-+                key.stride(0), value.stride(0), num_heads, head_size, block_size,
-+                data_block_stride, data_head_stride, data_block_offset_stride,
-+                scale_block_stride, scale_head_stride, scale_block_offset_stride,
-+                swizzle_v_sf);
++                scale_head_stride, scale_block_offset_stride, swizzle_v_sf);
        });
  }
 diff --git a/tests/v1/attention/test_gemma4_nvfp4_flashinfer_routing.py b/tests/v1/attention/test_gemma4_nvfp4_flashinfer_routing.py
 new file mode 100644
-index 000000000000..1b6879f1f753
+index 000000000..b688f4a39
 --- /dev/null
 +++ b/tests/v1/attention/test_gemma4_nvfp4_flashinfer_routing.py
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,134 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Static (no-GPU) routing check for Gemma 4 NVFP4 KV -> FLASHINFER.
@@ -194,19 +105,26 @@ index 000000000000..1b6879f1f753
 +    yield
 +
 +
-+def _mock_vllm_config(*, backend=None, cache_dtype="nvfp4",
-+                      head_dim=256, global_head_dim=512):
++def _mock_vllm_config(
++    *, backend=None, cache_dtype="nvfp4", head_dim=256, global_head_dim=512
++):
 +    return SimpleNamespace(
-+        attention_config=SimpleNamespace(backend=backend,
-+                                         flash_attn_version=None),
-+        cache_config=SimpleNamespace(cache_dtype=cache_dtype,
-+                                     kv_cache_dtype_skip_layers=None),
++        attention_config=SimpleNamespace(backend=backend, flash_attn_version=None),
++        cache_config=SimpleNamespace(
++            cache_dtype=cache_dtype, kv_cache_dtype_skip_layers=None
++        ),
 +        model_config=SimpleNamespace(
 +            hf_text_config=SimpleNamespace(
-+                head_dim=head_dim, global_head_dim=global_head_dim,
-+                layer_types=["sliding_attention", "sliding_attention",
-+                             "sliding_attention", "sliding_attention",
-+                             "sliding_attention", "full_attention"],
++                head_dim=head_dim,
++                global_head_dim=global_head_dim,
++                layer_types=[
++                    "sliding_attention",
++                    "sliding_attention",
++                    "sliding_attention",
++                    "sliding_attention",
++                    "sliding_attention",
++                    "full_attention",
++                ],
 +            )
 +        ),
 +    )
@@ -219,6 +137,7 @@ index 000000000000..1b6879f1f753
 +    def __init__(self, capability):
 +        self._cap = capability
 +        from vllm.platforms import current_platform as real
++
 +        self._real = real
 +
 +    def is_cuda(self):
@@ -239,17 +158,18 @@ index 000000000000..1b6879f1f753
 +    def _set(capability):
 +        import vllm.platforms as platforms_mod
 +        import vllm.v1.attention.backends.fa_utils as fa_utils_mod
++
 +        fake = _FakePlatform(capability)
-+        monkeypatch.setattr(platforms_mod, "current_platform", fake,
-+                            raising=False)
-+        monkeypatch.setattr(fa_utils_mod, "is_fa_version_supported",
-+                            lambda v: False)
++        monkeypatch.setattr(platforms_mod, "current_platform", fake, raising=False)
++        monkeypatch.setattr(fa_utils_mod, "is_fa_version_supported", lambda v: False)
 +        return fake
++
 +    return _set
 +
 +
 +def _gemma4_route(vllm_config):
 +    from vllm.model_executor.models.config import Gemma4Config
++
 +    Gemma4Config.verify_and_update_config(vllm_config)
 +    return vllm_config.attention_config.backend
 +
@@ -287,10 +207,10 @@ index 000000000000..1b6879f1f753
 +    assert _gemma4_route(cfg) == AttentionBackendEnum.TRITON_ATTN
 diff --git a/tests/v1/attention/test_nvfp4_flashinfer_vosplit_mm.py b/tests/v1/attention/test_nvfp4_flashinfer_vosplit_mm.py
 new file mode 100644
-index 000000000000..81846f9f8674
+index 000000000..1907c7744
 --- /dev/null
 +++ b/tests/v1/attention/test_nvfp4_flashinfer_vosplit_mm.py
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,181 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Static (no-GPU) unit tests for the FlashInfer NVFP4 VO-split factor and
@@ -331,10 +251,10 @@ index 000000000000..81846f9f8674
 +@pytest.mark.parametrize(
 +    "head_size,is_nvfp4,expected",
 +    [
-+        (256, True, 1),   # uniform Gemma 3 head — single pass
++        (256, True, 1),  # uniform Gemma 3 head — single pass
 +        (128, True, 1),
 +        (256, False, 1),
-+        (512, True, 2),   # Gemma 4 global head — two (qk=512, vo=256) passes
++        (512, True, 2),  # Gemma 4 global head — two (qk=512, vo=256) passes
 +        (512, False, 2),  # the split is dtype-independent
 +    ],
 +)
@@ -368,10 +288,7 @@ index 000000000000..81846f9f8674
 +    # No window, no spans -> strict lower-triangular causal mask.
 +    m = _mask(-1, [4], [4], [[]])
 +    expected = torch.tensor(
-+        [[1, 0, 0, 0],
-+         [1, 1, 0, 0],
-+         [1, 1, 1, 0],
-+         [1, 1, 1, 1]],
++        [[1, 0, 0, 0], [1, 1, 0, 0], [1, 1, 1, 0], [1, 1, 1, 1]],
 +        dtype=torch.bool,
 +    )
 +    assert torch.equal(m, expected)
@@ -383,10 +300,12 @@ index 000000000000..81846f9f8674
 +    # everything outside the span stays causal.
 +    m = _mask(-1, [4], [4], [[(1, 2)]])
 +    expected = torch.tensor(
-+        [[1, 0, 0, 0],
-+         [1, 1, 1, 0],   # q=1 now sees k=2 (forward, in-span)
-+         [1, 1, 1, 0],
-+         [1, 1, 1, 1]],
++        [
++            [1, 0, 0, 0],
++            [1, 1, 1, 0],  # q=1 now sees k=2 (forward, in-span)
++            [1, 1, 1, 0],
++            [1, 1, 1, 1],
++        ],
 +        dtype=torch.bool,
 +    )
 +    assert torch.equal(m, expected)
@@ -399,10 +318,12 @@ index 000000000000..81846f9f8674
 +    # causal. No spans.
 +    m = _mask(1, [4], [4], [[]])
 +    expected = torch.tensor(
-+        [[1, 0, 0, 0],
-+         [1, 1, 0, 0],
-+         [0, 1, 1, 0],   # k=0 is outside the window for q=2
-+         [0, 0, 1, 1]],
++        [
++            [1, 0, 0, 0],
++            [1, 1, 0, 0],
++            [0, 1, 1, 0],  # k=0 is outside the window for q=2
++            [0, 0, 1, 1],
++        ],
 +        dtype=torch.bool,
 +    )
 +    assert torch.equal(m, expected)
@@ -413,9 +334,9 @@ index 000000000000..81846f9f8674
 +    # window_left=-1), and an in-span pair must survive even when the window
 +    # would have excluded it: q=3,k=1 are >window apart but both in span.
 +    m = _mask(1, [4], [4], [[(1, 3)]])
-+    assert m[3, 1]                       # span overrides the window
-+    assert m[1, 3]                       # and is bidirectional
-+    assert not m[3, 0]                   # k=0 outside span and window -> off
++    assert m[3, 1]  # span overrides the window
++    assert m[1, 3]  # and is bidirectional
++    assert not m[3, 0]  # k=0 outside span and window -> off
 +
 +
 +def test_mm_mask_with_context_offset():
@@ -424,8 +345,10 @@ index 000000000000..81846f9f8674
 +    m = _mask(-1, [2], [4], [[]])  # 2 new queries over a 4-long KV
 +    # q_abs = [2, 3], k_abs = [0,1,2,3]; causal k <= q
 +    expected = torch.tensor(
-+        [[1, 1, 1, 0],   # q=2 sees k 0..2
-+         [1, 1, 1, 1]],  # q=3 sees k 0..3
++        [
++            [1, 1, 1, 0],  # q=2 sees k 0..2
++            [1, 1, 1, 1],
++        ],  # q=3 sees k 0..3
 +        dtype=torch.bool,
 +    )
 +    assert torch.equal(m, expected)
@@ -470,10 +393,10 @@ index 000000000000..81846f9f8674
 +    out = _spans({1: [(3, 6)]}, [0, 1, 11], [5, 11], 1, 1)
 +    assert out == [[(3, 6)]]
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 190b15667dd1..0ec897ac3d8b 100755
+index 13a19b86c..f394ac151 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
-@@ -190,6 +190,8 @@
+@@ -194,6 +194,8 @@ if TYPE_CHECKING:
      VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR: str | None = None
      VLLM_FLASHINFER_ALLREDUCE_BACKEND: Literal["auto", "trtllm", "mnnvl"] = "auto"
      VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE: int = 394 * 1024 * 1024
@@ -482,7 +405,7 @@ index 190b15667dd1..0ec897ac3d8b 100755
      VLLM_XGRAMMAR_CACHE_MB: int = 0
      VLLM_REGEX_COMPILATION_TIMEOUT_S: int = 5
      VLLM_MSGPACK_ZERO_COPY_THRESHOLD: int = 256
-@@ -1550,6 +1552,24 @@ def _resolve_rust_frontend_path() -> str | None:
+@@ -1586,6 +1588,22 @@ environment_variables: dict[str, Callable[[], Any]] = {
      "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE": lambda: int(
          os.getenv("VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE", str(394 * 1024 * 1024))
      ),
@@ -491,9 +414,7 @@ index 190b15667dd1..0ec897ac3d8b 100755
 +    # head_dim_vo=256) through the FlashInfer FA2 asymmetric paged kernel
 +    # instead of forcing TRITON_ATTN. Default-on for nvfp4 KV; "0" is the
 +    # escape hatch back to the Triton fallback.
-+    "VLLM_NVFP4_KV_VOSPLIT": lambda: bool(
-+        int(os.getenv("VLLM_NVFP4_KV_VOSPLIT", "1"))
-+    ),
++    "VLLM_NVFP4_KV_VOSPLIT": lambda: bool(int(os.getenv("VLLM_NVFP4_KV_VOSPLIT", "1"))),
 +    # Let the FlashInfer backend serve mm-prefix LMs (Gemma 3 / Gemma 4
 +    # multimodal): image-token spans attend bidirectionally via FA2
 +    # packed custom masks on a second prefill wrapper; text requests
@@ -508,10 +429,10 @@ index 190b15667dd1..0ec897ac3d8b 100755
      # NVFP4 MoE CUTLASS Kernel. This value is used to create a buffer for
      # the blockscale tensor of activations NVFP4 Quantization.
 diff --git a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
-index 229112739a4f..cf5231c5422c 100644
+index 3789cd172..f272e6276 100644
 --- a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
 +++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py
-@@ -983,10 +983,11 @@ def validate_kv_cache_scheme(kv_cache_scheme: dict[str, Any] | None):
+@@ -983,10 +983,11 @@ class CompressedTensorsKVCacheMethod(BaseKVCacheMethod):
          type_ = kv_cache_scheme.get("type")
          num_bits = kv_cache_scheme.get("num_bits")
  
@@ -526,26 +447,25 @@ index 229112739a4f..cf5231c5422c 100644
              )
  
 diff --git a/vllm/model_executor/models/config.py b/vllm/model_executor/models/config.py
-index ac6761498689..fdca883b57fd 100644
+index cb01a12ef..1345b2387 100644
 --- a/vllm/model_executor/models/config.py
 +++ b/vllm/model_executor/models/config.py
-@@ -75,9 +75,42 @@ def verify_and_update_config(vllm_config: "VllmConfig") -> None:
+@@ -216,9 +216,41 @@ class Gemma4Config(VerifyAndUpdateConfig):
          if head_dim is None or global_head_dim is None or head_dim == global_head_dim:
              return
  
 -        from vllm.v1.attention.backends.fa_utils import is_fa_version_supported
-         from vllm.v1.attention.backends.registry import AttentionBackendEnum
- 
 +        # NVFP4 KV cache on consumer Blackwell (CC 12.x): the FlashInfer
 +        # FA2 asymmetric paged kernel handles head_dim_qk=512 /
-+        # head_dim_vo=256 directly (the campaign VO-split path), so route
++        # head_dim_vo=256 directly (the two-pass VO-split path), so route
 +        # the heterogeneous-head Gemma 4 config to FLASHINFER instead of
 +        # the TRITON_ATTN fallback below. Gated on VLLM_NVFP4_KV_VOSPLIT
 +        # (default-on for nvfp4) and only when the user did not pin a
 +        # backend. Returns before the FA4/Triton selection.
 +        import vllm.envs as envs
 +        from vllm.platforms import current_platform
-+
+         from vllm.v1.attention.backends.registry import AttentionBackendEnum
+ 
 +        cache_config = vllm_config.cache_config
 +        if (
 +            cache_config is not None
@@ -573,89 +493,11 @@ index ac6761498689..fdca883b57fd 100644
          max_head_dim = max(head_dim, global_head_dim)
  
          if is_fa_version_supported(4) and max_head_dim <= 512:
-diff --git a/vllm/utils/torch_utils.py b/vllm/utils/torch_utils.py
-index 9269fbb44d72..6438411380b0 100644
---- a/vllm/utils/torch_utils.py
-+++ b/vllm/utils/torch_utils.py
-@@ -467,29 +467,60 @@ def _nvfp4_split_data_scale(
-     return data, scale
- 
- 
--def nvfp4_kv_cache_split_views(kv_cache: torch.Tensor) -> tuple[tuple, tuple]:
-+def _nvfp4_global_split_views(kv_cache: torch.Tensor) -> tuple[tuple, tuple]:
-+    """Contiguous [all-data | all-SF] split for the FlashInfer FA2 nvfp4 path.
-+
-+    The FA2 paged nvfp4 kernel derives the scale-factor stride as
-+    ``data_stride / 8`` (it does not read the SF tensor's own strides), so the
-+    data and scale regions must each be contiguous with that exact 8:1 ratio at
-+    every dim.  We therefore lay the page buffer out as one contiguous data
-+    region followed by one contiguous SF region (rather than the trtllm-gen
-+    per-page ``[data|scale]`` interleave).  Slicing K/V from dim 1 preserves the
-+    8:1 ratio on each side (both skip the other side's region by the same
-+    factor).  Requires a contiguous (NHD) ``kv_cache``.
-+    """
-+    full = kv_cache.shape[-1]
-+    data_dim = full * 8 // 9
-+    scale_dim = full - data_dim
-+    flat = kv_cache.reshape(-1)
-+    if kv_cache.dim() == 4:
-+        nb, d1, d2 = kv_cache.shape[:3]
-+        dc = nb * d1 * d2 * data_dim
-+        data = flat[:dc].view(nb, d1, d2, data_dim)
-+        scale = flat[dc:].view(nb, d1, d2, scale_dim).view(torch.float8_e4m3fn)
-+        return (data,), (scale,)
-+    nb, two, d1, d2 = kv_cache.shape[:4]
-+    dc = nb * two * d1 * d2 * data_dim
-+    data = flat[:dc].view(nb, two, d1, d2, data_dim)
-+    scale = flat[dc:].view(nb, two, d1, d2, scale_dim).view(torch.float8_e4m3fn)
-+    return (data[:, 0], data[:, 1]), (scale[:, 0], scale[:, 1])
-+
-+
-+def nvfp4_kv_cache_split_views(
-+    kv_cache: torch.Tensor, contiguous_sf_layout: bool = False
-+) -> tuple[tuple, tuple]:
-     """Split an NVFP4 KV cache tensor into data and scale views.
- 
-     Accepts either a 5D tensor ``(num_pages, 2, dim_2, dim_3, full_dim)``
-     or a 4D single-side tensor ``(num_pages, dim_2, dim_3, full_dim)``.
- 
--    Per-page layout: [K_data | K_scale | V_data | V_scale].
--    Each KV side is self-contained (data followed by its scale), so the
--    5D case simply splits each side independently.
-+    Two physical layouts are supported, selected by ``contiguous_sf_layout``:
- 
--    The returned views are in the same dim order as the input (NHD or
--    HND), so callers get views matching whichever order they passed in.
-+    * ``False`` (default, trtllm-gen / sm100f): per-page ``[data|scale]`` — each
-+      KV side is self-contained (data followed by its scale) within its page.
-+    * ``True`` (FlashInfer FA2 / sm120/sm121): contiguous ``[all-data|all-SF]``
-+      — required because the FA2 nvfp4 kernel derives the SF stride as
-+      ``data_stride/8``.  See :func:`_nvfp4_global_split_views`.
- 
--    Args:
--        kv_cache: 5D or 4D uint8 tensor where the last dimension is
--            ``full_dim = data_dim + scale_dim = 9 * head_size / 16``.
-+    The returned views are in the same dim order as the input (NHD or HND).
- 
-     Returns:
--        For 5D input:
--            ``(k_data, v_data), (k_scale, v_scale)``
--        For 4D input (single KV side):
--            ``(data,), (scale,)``
-+        For 5D input: ``(k_data, v_data), (k_scale, v_scale)``.
-+        For 4D input (single KV side): ``(data,), (scale,)``.
-     """
-+    if contiguous_sf_layout:
-+        return _nvfp4_global_split_views(kv_cache)
-+
-     if kv_cache.dim() == 4:
-         data, scale = _nvfp4_split_data_scale(kv_cache)
-         return (data,), (scale,)
 diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
-index 80319003da59..beaefbdae259 100755
+index 5e2295c0a..de3f4dfcf 100755
 --- a/vllm/v1/attention/backends/flashinfer.py
 +++ b/vllm/v1/attention/backends/flashinfer.py
-@@ -83,6 +83,58 @@
+@@ -88,6 +88,57 @@ FP4_DTYPE = torch.uint8
  
  logger = init_logger(__name__)
  
@@ -686,11 +528,10 @@ index 80319003da59..beaefbdae259 100755
 +    factors).
 +
 +    The split is dtype-independent (the guard counts only accumulator
-+    fragments). For NVFP4 it additionally requires the contiguous
-+    ``[all-data | all-SF]`` cache layout (``contiguous_sf_layout=True`` in
-+    ``nvfp4_kv_cache_split_views``) so each chunk's data and scale factors
-+    are contiguous and slice cleanly along the head dim; the trtllm-gen
-+    per-page swizzle does not commute with head-dim slicing.
++    fragments). For NVFP4 it additionally requires linear (non-swizzled)
++    V scale factors, which the sm12x cache writer stores, so the V data
++    and scale views slice cleanly along the head dim; the trtllm-gen
++    4-token V-scale swizzle does not commute with head-dim slicing.
 +    """
 +    if head_size <= 256:
 +        return 1
@@ -711,12 +552,24 @@ index 80319003da59..beaefbdae259 100755
 +    return split
 +
 +
- trtllm_gen_workspace_buffer = None
+ trtllm_workspace_buffer = None
  
  
-@@ -449,6 +501,16 @@ def supports_sink(cls) -> bool:
-         # Check if TRTLLM is supported on this platform
-         return supports_trtllm_attention()
+@@ -426,6 +477,11 @@ class FlashInferBackend(AttentionBackend):
+     @classmethod
+     def supports_kv_cache_dtype(cls, kv_cache_dtype: CacheDType | None) -> bool:
+         if kv_cache_dtype == "nvfp4":
++            # Consumer Blackwell (sm120/sm121): NVFP4 KV is served through
++            # the FlashInfer FA2 paged reader (uint8 fp4 cache), no
++            # trtllm-gen requirement. Mirrors the builder __init__ gate.
++            if current_platform.is_device_capability_family(120):
++                return True
+             return (
+                 current_platform.is_device_capability_family(100)
+                 and supports_trtllm_attention(is_prefill=True)
+@@ -469,22 +525,78 @@ class FlashInferBackend(AttentionBackend):
+             is_prefill=False
+         ) and supports_trtllm_attention(is_prefill=True)
  
 +    @classmethod
 +    def supports_mm_prefix(cls) -> bool:
@@ -731,7 +584,31 @@ index 80319003da59..beaefbdae259 100755
      @classmethod
      def get_required_kv_cache_layout(cls) -> KVCacheLayoutType | None:
          capability = current_platform.get_device_capability()
-@@ -459,12 +521,37 @@ def get_required_kv_cache_layout(cls) -> KVCacheLayoutType | None:
+         if capability is not None and capability.major == 10:
+             return "HND"
++        # NVFP4 KV on consumer Blackwell (sm120/sm121, FA2 path): each K/V
++        # side of the cache packs [data | scale] regions carved out of the
++        # side's byte range (reshape_and_cache_nvfp4 writes the scales at
++        # side_base + num_heads * block_size * data_dim;
++        # nvfp4_split_data_scale reads them back with derived strides).
++        # That carve is only byte-coherent when each side's heads own one
++        # contiguous region per page, i.e. under the head-major HND layout.
++        # Under NHD the K and V head rows interleave within each token and
++        # the side-region offsets land inside the other side's data ->
++        # silent KV corruption. This hook has no dtype parameter, so read
++        # the ambient vllm config (same pattern as
++        # get_kv_connector_cache_layout); if the layout hook grows a
++        # dtype-aware signature, this decision moves into it.
++        if capability is not None and capability.major == 12:
++            vllm_config = get_current_vllm_config_or_none()
++            if (
++                vllm_config is not None
++                and vllm_config.cache_config is not None
++                and vllm_config.cache_config.cache_dtype == "nvfp4"
++            ):
++                return "HND"
+         return None
+ 
      forward_includes_kv_cache_update: bool = False
  
  
@@ -769,7 +646,7 @@ index 80319003da59..beaefbdae259 100755
  
  @dataclass
  class FIDecode:
-@@ -581,6 +668,9 @@ def __init__(
+@@ -618,6 +730,9 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
          self._noncausal_prefill_wrapper: BatchPrefillWithPagedKVCacheWrapper | None = (
              None  # Wrapper for non-causal prefill (DFlash)
          )
@@ -779,7 +656,7 @@ index 80319003da59..beaefbdae259 100755
          self._decode_wrapper = None  # Wrapper for decode (general shape)
  
          if envs.VLLM_BATCH_INVARIANT:
-@@ -641,6 +731,14 @@ def __init__(
+@@ -679,6 +794,14 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
  
          self.num_kv_heads = self.kv_cache_spec.num_kv_heads
          self.head_dim = self.kv_cache_spec.head_size
@@ -794,42 +671,44 @@ index 80319003da59..beaefbdae259 100755
          self.page_size = self.kv_cache_spec.block_size
  
          if self.kv_cache_spec.kv_quant_mode != KVQuantMode.NONE:
-@@ -648,17 +746,26 @@ def __init__(
+@@ -686,19 +809,31 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
              # Cannot use self.kv_cache_spec.dtype here because kv_cache_spec
              # storage dtype may not be the same as the op dtype (uint8 vs fp8_e4m3)
              self.is_kvcache_nvfp4 = self.cache_dtype == "nvfp4"
 +            self.use_fa2_nvfp4_kv = False
              if self.is_kvcache_nvfp4:
--                # trtllm-gen FP4 FMHA kernels only exist for sm100f (sm_100/sm_103).
--                # Fail fast at init rather than crashing on the first request.
--                if not current_platform.is_device_capability_family(100):
+-                if (
 +                if current_platform.is_device_capability_family(120):
 +                    # Consumer Blackwell (sm120/sm121): no trtllm-gen FP4 FMHA,
 +                    # so route NVFP4 KV through FlashInfer's FA2 paged reader.
-+                    # The cache stores packed uint8 fp4 data; scale factors are a
-+                    # separate contiguous tensor (see contiguous_sf_layout).
++                    # The cache stores packed uint8 fp4 data; the per-side
++                    # [data | scale] regions are read back as views with
++                    # explicit strides (nvfp4_split_data_scale).
 +                    self.use_fa2_nvfp4_kv = True
 +                    self.kv_cache_dtype = FlashInferBackend.get_dtype_for_flashinfer(
 +                        "nvfp4"
 +                    )
-+                elif current_platform.is_device_capability_family(100):
-+                    # sm100f trtllm-gen: kv_cache_dtype stays the string "nvfp4"
-+                    # which is passed to FlashInferImpl.
-+                    self.kv_cache_dtype = self.cache_dtype
-+                else:
++                elif (
+                     force_use_trtllm_attention() is False
+                     or not supports_trtllm_attention(is_prefill=True)
+                     or not supports_trtllm_attention(is_prefill=False)
+                 ):
                      raise ValueError(
--                        "--kv-cache-dtype nvfp4 requires sm100f, "
--                        "please try a different dtype or remove"
-+                        "--kv-cache-dtype nvfp4 requires sm100f (datacenter "
-+                        "Blackwell) or sm120/sm121 (consumer Blackwell)"
+                         "--kv-cache-dtype nvfp4 requires the SM100 trtllm-gen "
+-                        "FlashInfer path."
++                        "FlashInfer path or consumer Blackwell (sm120/sm121)."
                      )
 -                # For NVFP4, kv_cache_dtype stays as the string "nvfp4"
 -                # which is passed to FlashInferImpl
 -                self.kv_cache_dtype = self.cache_dtype
++                else:
++                    # sm100 trtllm-gen: kv_cache_dtype stays the string "nvfp4"
++                    # which is passed to FlashInferImpl.
++                    self.kv_cache_dtype = self.cache_dtype
              else:
                  self.kv_cache_dtype = FlashInferBackend.get_dtype_for_flashinfer(
                      self.cache_dtype
-@@ -666,6 +773,7 @@ def __init__(
+@@ -706,9 +841,21 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
          else:
              self.cache_dtype = "auto"
              self.is_kvcache_nvfp4 = False
@@ -837,37 +716,37 @@ index 80319003da59..beaefbdae259 100755
              assert self.kv_cache_spec.dtype == self.model_config.dtype
              self.kv_cache_dtype = self.kv_cache_spec.dtype
  
-@@ -685,11 +793,14 @@ def __init__(
-             can_use_trtllm
-             and not vllm_config.attention_config.disable_flashinfer_q_quantization
-         ):
--            if self.is_kvcache_nvfp4:
--                # NVFP4 KV cache uses FP8 quantized queries
-+            if self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv:
-+                # trtllm-gen NVFP4 KV uses FP8 queries; the FA2 paged
-+                # path (sm12x) uses model-dtype queries.
-                 self.q_data_type = FlashInferBackend.get_dtype_for_flashinfer(
-                     "fp8_e4m3"
-                 )
-+            elif self.is_kvcache_nvfp4:
-+                self.q_data_type = self.model_config.dtype
-             else:
-                 self.q_data_type = self.kv_cache_dtype
-         else:
-@@ -700,6 +811,25 @@ def __init__(
-         self.use_trtllm_decode_attention = can_use_trtllm
-         self._init_reorder_batch_threshold(1, supports_spec_as_decode=can_use_trtllm)
- 
++        if self.is_kvcache_nvfp4 and get_kv_cache_layout() != "HND":
++            # The NVFP4 per-side [data | scale] carve is only byte-coherent
++            # under the head-major HND layout (see
++            # FlashInferBackend.get_required_kv_cache_layout). NHD would
++            # silently corrupt the cache, so fail at init instead.
++            raise ValueError(
++                "NVFP4 KV cache requires the HND KV cache layout; resolved "
++                f"layout is {get_kv_cache_layout()!r}. Unset "
++                "VLLM_KV_CACHE_LAYOUT or set it to 'HND'."
++            )
++
+         # Compute per-phase Q dtype.  On SM90 (XQA decode), the prefill and
+         # decode phases require different Q dtypes when the KV cache is FP8
+         # (FP8-Q for the FI native prefill, BF16/FP16-Q for XQA decode),
+@@ -738,9 +885,26 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+             self.flashinfer_trtllm_api_decode_kernel
+             == FlashInferDecodeKernel.TRTLLM_GEN
+         )
 +        # Two-pass VO split for head_size > 256 (Gemma 4 full-attention,
-+        # head_dim_qk=512). vo_split == 1 leaves all existing paths
-+        # untouched.
++        # head_dim_qk=512). vo_split == 1 leaves all existing paths untouched.
 +        self.vo_split = _vo_split_factor(self.head_dim, self.use_fa2_nvfp4_kv)
+         self._init_reorder_batch_threshold(
+-            1, supports_spec_as_decode=supports_spec_as_decode
++            0 if self.vo_split > 1 else 1,
++            supports_spec_as_decode=supports_spec_as_decode,
++            supports_dcp_with_varlen=False,
+         )
 +        if self.vo_split > 1:
 +            # BatchDecodeWithPagedKVCacheWrapper.plan() has no head_dim_vo,
 +            # so route every request through the VO-split-planned prefill
-+            # wrapper: threshold 0 classifies nothing as decode, and a
-+            # causal qo_len==1 prefill computes exactly what decode would.
-+            self.reorder_batch_threshold = 0
++            # wrapper. A causal qo_len==1 prefill is decode-equivalent.
 +            logger.info_once(
 +                "FA2 VO split (%s KV): head_size %d runs as %d passes of "
 +                "head_dim_vo=%d; decode requests use the prefill wrapper.",
@@ -876,14 +755,13 @@ index 80319003da59..beaefbdae259 100755
 +                self.vo_split,
 +                self.head_dim // self.vo_split,
 +            )
-+
+ 
          self._cascade_wrapper = None  # Wrapper for cascade attention
  
-         # Global hyperparameters shared by all attention layers
-@@ -717,6 +847,39 @@ def __init__(
-                 "sinks, please use trtllm on blackwell or flash attention on "
-                 "earlier GPUs."
-             )
+@@ -786,6 +950,39 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+             self.kv_cache_dtype,
+             arch,
+         )
 +
 +        # mm-prefix (PrefixLM) span-level bidirectional masking for this
 +        # layer group. Gemma4 with use_bidirectional_attention='vision'
@@ -920,7 +798,18 @@ index 80319003da59..beaefbdae259 100755
          # Preparing persistent buffers
          # Since we do not have explicit synchronization in ModelRunnerV2, we do not pin
          # reused CPU buffers to avoid a race condition between step N async copies to
-@@ -824,9 +987,14 @@ def _get_prefill_wrapper(
+@@ -832,6 +1029,10 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                 return FlashInferBackend.get_dtype_for_flashinfer(cache_dtype)
+             return self.model_config.dtype
+         if cache_dtype == "nvfp4":
++            if current_platform.is_device_capability_family(120):
++                # The FA2 paged nvfp4 reader (consumer Blackwell) consumes
++                # model-dtype queries; FP8-Q is a trtllm-gen-only contract.
++                return self.model_config.dtype
+             return FlashInferBackend.get_dtype_for_flashinfer("fp8_e4m3")
+         return self.kv_cache_spec.dtype
+ 
+@@ -939,9 +1140,14 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                      dcp_a2a=self.dcp_a2a,
                  )
              else:
@@ -938,7 +827,7 @@ index 80319003da59..beaefbdae259 100755
                  self._prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
                      self._get_workspace_buffer(),
                      get_kv_cache_layout(),
-@@ -835,6 +1003,25 @@ def _get_prefill_wrapper(
+@@ -950,6 +1156,25 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
          assert self._prefill_wrapper is not None
          return self._prefill_wrapper
  
@@ -964,7 +853,7 @@ index 80319003da59..beaefbdae259 100755
      def _get_decode_wrapper(self, batch_size: int, use_cudagraph: bool = False):
          if use_cudagraph:
              decode_wrapper = self._decode_wrappers_cudagraph.get(batch_size, None)
-@@ -850,9 +1037,14 @@ def _get_decode_wrapper(self, batch_size: int, use_cudagraph: bool = False):
+@@ -965,9 +1190,14 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                  paged_kv_indptr = None
                  paged_kv_indices = None
                  paged_kv_last_page_len = None
@@ -982,7 +871,7 @@ index 80319003da59..beaefbdae259 100755
              decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
                  self._get_workspace_buffer(),
                  get_kv_cache_layout(),
-@@ -939,6 +1131,196 @@ def _compute_flashinfer_kv_metadata(
+@@ -1054,6 +1284,192 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
          )
          return paged_kv_indices
  
@@ -1133,9 +1022,7 @@ index 80319003da59..beaefbdae259 100755
 +                group_window_left = -1
 +            else:
 +                maybe_wrapper = self._get_prefill_wrapper()
-+                assert isinstance(
-+                    maybe_wrapper, BatchPrefillWithPagedKVCacheWrapper
-+                )
++                assert isinstance(maybe_wrapper, BatchPrefillWithPagedKVCacheWrapper)
 +                wrapper = maybe_wrapper
 +                custom_mask = None
 +                group_causal = True
@@ -1144,9 +1031,7 @@ index 80319003da59..beaefbdae259 100755
 +                qo_indptr=group_qo_indptr,
 +                paged_kv_indptr=group_kv_indptr,
 +                paged_kv_indices=group_kv_indices,
-+                paged_kv_last_page_len=paged_kv_last_page_len_prefill_cpu[
-+                    req_indices
-+                ],
++                paged_kv_last_page_len=paged_kv_last_page_len_prefill_cpu[req_indices],
 +                num_qo_heads=self.num_qo_heads,
 +                num_kv_heads=self.num_kv_heads,
 +                head_dim_qk=self.head_dim,
@@ -1159,7 +1044,7 @@ index 80319003da59..beaefbdae259 100755
 +                sm_scale=self.sm_scale,
 +                window_left=group_window_left,
 +                logits_soft_cap=self.logits_soft_cap,
-+                q_data_type=self.q_data_type,
++                q_data_type=self.q_data_type_prefill,
 +                kv_data_type=self.kv_cache_dtype,
 +                o_data_type=o_dtype,
 +                fixed_split_size=self.prefill_fixed_split_size,
@@ -1179,7 +1064,7 @@ index 80319003da59..beaefbdae259 100755
      def build(
          self,
          common_prefix_len: int,
-@@ -1007,6 +1389,17 @@ def build(
+@@ -1122,6 +1538,17 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                  "Using FlashInfer for draft model non-causal attention; TRTLLM "
                  "can still be used for target model causal attention."
              )
@@ -1196,8 +1081,8 @@ index 80319003da59..beaefbdae259 100755
 +
          all_uses_trtllm = causal and (
              (num_prefills == 0 or prefill_use_trtllm)
-             and (num_decodes == 0 or decode_use_trtllm)
-@@ -1216,6 +1609,7 @@ def build(
+             and (num_decodes == 0 or decode_with_flashinfer_trtllm_api)
+@@ -1331,6 +1758,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                      prefill_start : num_reqs + 1
                  ]
                  assert paged_kv_indptr_prefill_cpu.shape[0] == num_prefills + 1
@@ -1205,12 +1090,15 @@ index 80319003da59..beaefbdae259 100755
                  if self.use_dcp:
                      assert isinstance(prefill_wrapper, BatchDCPPrefillWrapper)
                      prefill_wrapper.plan(
-@@ -1245,28 +1639,51 @@ def build(
+@@ -1360,28 +1788,53 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                      # use FP8 o_data_type so the wrapper matches the
                      # FP8 output buffer allocated in forward().
                      o_dtype = (
 -                        FP8_DTYPE if self.is_kvcache_nvfp4 else self.model_config.dtype
--                    )
++                        FP8_DTYPE
++                        if (self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv)
++                        else self.model_config.dtype
+                     )
 -                    prefill_wrapper.plan(
 -                        qo_indptr=qo_indptr_prefill_cpu,
 -                        paged_kv_indptr=paged_kv_indptr_prefill_cpu,
@@ -1224,13 +1112,12 @@ index 80319003da59..beaefbdae259 100755
 -                        sm_scale=self.sm_scale,
 -                        window_left=self.window_left,
 -                        logits_soft_cap=self.logits_soft_cap,
--                        q_data_type=self.q_data_type,
+-                        q_data_type=self.q_data_type_prefill,
 -                        kv_data_type=self.kv_cache_dtype,
 -                        o_data_type=o_dtype,
 -                        fixed_split_size=self.prefill_fixed_split_size,
 -                        disable_split_kv=self.disable_split_kv,
-+                        FP8_DTYPE if (self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv) else self.model_config.dtype
-                     )
+-                    )
 -                attn_metadata.prefill = FIPrefill(wrapper=prefill_wrapper)
 +                    if prefill_mm_spans is not None:
 +                        assert seq_lens_cpu is not None
@@ -1266,7 +1153,7 @@ index 80319003da59..beaefbdae259 100755
 +                            sm_scale=self.sm_scale,
 +                            window_left=self.window_left,
 +                            logits_soft_cap=self.logits_soft_cap,
-+                            q_data_type=self.q_data_type,
++                            q_data_type=self.q_data_type_prefill,
 +                            kv_data_type=self.kv_cache_dtype,
 +                            o_data_type=o_dtype,
 +                            fixed_split_size=self.prefill_fixed_split_size,
@@ -1278,22 +1165,23 @@ index 80319003da59..beaefbdae259 100755
  
          ## DECODE PATHWAY
          if num_decodes > 0:
-@@ -1300,7 +1717,7 @@ def build(
+@@ -1417,7 +1870,9 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                  # use FP8 o_data_type so the wrapper matches the
                  # FP8 output buffer allocated in forward().
                  o_dtype = (
 -                    FP8_DTYPE if self.is_kvcache_nvfp4 else self.model_config.dtype
-+                    FP8_DTYPE if (self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv) else self.model_config.dtype
++                    FP8_DTYPE
++                    if (self.is_kvcache_nvfp4 and not self.use_fa2_nvfp4_kv)
++                    else self.model_config.dtype
                  )
                  fast_plan_decode(
                      decode_wrapper,
-@@ -1370,7 +1787,16 @@ def __init__(
+@@ -1487,7 +1942,15 @@ class FlashInferImpl(AttentionImpl):
          )
          self.kv_cache_dtype = kv_cache_dtype
          self.is_kvcache_nvfp4 = kv_cache_dtype == "nvfp4"
 +        self.use_fa2_nvfp4_kv = (
-+            self.is_kvcache_nvfp4
-+            and current_platform.is_device_capability_family(120)
++            self.is_kvcache_nvfp4 and current_platform.is_device_capability_family(120)
 +        )
          self.fp4_data_dim = head_size // 2 if self.is_kvcache_nvfp4 else 0
 +        # Two-pass VO split factor for head_size > 256 (Gemma 4 D=512); 1
@@ -1304,9 +1192,9 @@ index 80319003da59..beaefbdae259 100755
          self.logits_soft_cap = logits_soft_cap
          self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
  
-@@ -1438,6 +1864,69 @@ def process_weights_after_loading(self, act_dtype: torch.dtype):
-         if self.sinks is not None and self.sinks.dtype != torch.float32:
-             self.sinks = self.sinks.to(torch.float32)
+@@ -1596,6 +2059,71 @@ class FlashInferImpl(AttentionImpl):
+ 
+         return query
  
 +    def _run_vo_split_prefill(
 +        self,
@@ -1316,6 +1204,7 @@ index 80319003da59..beaefbdae259 100755
 +        kv_sf: tuple[torch.Tensor, torch.Tensor] | None,
 +        out: torch.Tensor,
 +        *,
++        q_scale: float,
 +        k_scale: float,
 +        v_scale: float,
 +    ) -> None:
@@ -1328,10 +1217,10 @@ index 80319003da59..beaefbdae259 100755
 +        along the head dim with no LSE merge. narrow() keeps the full
 +        tensor's strides, which the FA2 path requires.
 +
-+        NVFP4 V slicing relies on the contiguous ``[all-data | all-SF]``
-+        cache layout (``contiguous_sf_layout=True``): the V data view's last
-+        dim is ``head_size // 2`` packed e2m1 bytes and the V scale view's
-+        last dim is ``head_size // 16`` fp8 scales, both contiguous along the
++        NVFP4 V slicing relies on the linear (non-swizzled) V scale layout
++        the sm12x cache writer stores: the V data view's last dim is
++        ``head_size // 2`` packed e2m1 bytes and the V scale view's last
++        dim is ``head_size // 16`` fp8 scales, both contiguous along the
 +        head dim, so chunk ``i`` is data[i*chunk//2 : ...] and
 +        scale[i*chunk//16 : ...].
 +        """
@@ -1364,6 +1253,7 @@ index 80319003da59..beaefbdae259 100755
 +            wrapper.run(
 +                query,
 +                (k_cache, v_cache_i),
++                q_scale=q_scale,
 +                k_scale=k_scale,
 +                v_scale=v_scale,
 +                out=out_i,
@@ -1374,16 +1264,7 @@ index 80319003da59..beaefbdae259 100755
      def forward(
          self,
          layer: torch.nn.Module,
-@@ -1584,7 +2073,7 @@ def forward(
-         nvfp4_kv_block_scales = None
-         if self.is_kvcache_nvfp4:
-             nvfp4_kv_data, nvfp4_kv_block_scales = nvfp4_kv_cache_split_views(
--                kv_cache_permute
-+                kv_cache_permute, contiguous_sf_layout=self.use_fa2_nvfp4_kv
-             )
- 
-         use_dcp = self.dcp_world_size > 1
-@@ -1626,12 +2115,28 @@ def forward(
+@@ -1795,39 +2323,100 @@ class FlashInferImpl(AttentionImpl):
                      assert isinstance(
                          prefill_wrapper, BatchPrefillWithPagedKVCacheWrapper
                      )
@@ -1394,29 +1275,33 @@ index 80319003da59..beaefbdae259 100755
                      )
                      assert prefill_wrapper._sm_scale == self.scale
 -                    assert prefill_wrapper._causal == attn_metadata.causal
+-
+-                    if self.is_kvcache_nvfp4:
+-                        kv_cache_permute = nvfp4_kv_data
 +                    if mm_groups is None:
 +                        assert prefill_wrapper._window_left == self.window_left
 +                        assert prefill_wrapper._causal == attn_metadata.causal
 +                    else:
-+                        # The mm group's wrapper carries the sliding window
-+                        # and causality inside its packed custom mask
-+                        # (planned non-causal, window_left=-1); the plain
-+                        # group keeps the scalar-causal plan.
 +                        for group in mm_groups:
 +                            if group.wrapper._custom_mask_buf is None:
 +                                assert group.wrapper._causal
-+                                assert (
-+                                    group.wrapper._window_left == self.window_left
-+                                )
++                                assert group.wrapper._window_left == self.window_left
 +                            else:
 +                                assert not group.wrapper._causal
 +                                assert group.wrapper._window_left == -1
++
++                    kv_cache_for_fi = (
++                        nvfp4_kv_data if self.is_kvcache_nvfp4 else kv_cache_permute
++                    )
+                     kv_cache_sf = (
+                         nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
+                     )
  
-                     if self.is_kvcache_nvfp4:
-                         kv_cache_permute = nvfp4_kv_data
-@@ -1643,21 +2148,81 @@ def forward(
-                     # Use a pre-allocated FP8 buffer and dequantize
-                     # afterwards.
+-                    # NVFP4 trtllm kernel only supports FP8 output.
+-                    # Use a pre-allocated FP8 buffer and dequantize
+-                    # afterwards.
++                    # The SM100 trtllm NVFP4 kernel requires FP8 output; the
++                    # SM120/121 FA2 reader writes the model output dtype directly.
                      needs_fp8_out_prefill = (
 -                        self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
 +                        self.is_kvcache_nvfp4
@@ -1431,20 +1316,15 @@ index 80319003da59..beaefbdae259 100755
 -                    prefill_wrapper.run(
 -                        prefill_query,
 -                        kv_cache_permute,
+-                        q_scale=layer._q_scale_float,
 -                        k_scale=layer._k_scale_float,
 -                        v_scale=layer._v_scale_float,
 -                        out=out_prefill,
 -                        kv_cache_sf=kv_cache_sf,
 -                    )
 +                    if mm_groups is not None:
-+                        # mm-prefix grouping: each partition runs its own
-+                        # planned wrapper (plain causal vs packed custom
-+                        # mask) over a gathered copy of its query rows,
-+                        # then scatters back. Gather/scatter is by token
-+                        # index because the groups may interleave within
-+                        # the batch.
 +                        if self.is_kvcache_nvfp4:
-+                            assert isinstance(kv_cache_permute, tuple)
++                            assert isinstance(kv_cache_for_fi, tuple)
 +                        for group in mm_groups:
 +                            group_query = torch.index_select(
 +                                prefill_query, 0, group.token_indices
@@ -1458,45 +1338,43 @@ index 80319003da59..beaefbdae259 100755
 +                                self._run_vo_split_prefill(
 +                                    group.wrapper,
 +                                    group_query,
-+                                    kv_cache_permute,
++                                    kv_cache_for_fi,
 +                                    kv_cache_sf,
 +                                    group_out,
++                                    q_scale=layer._q_scale_float,
 +                                    k_scale=layer._k_scale_float,
 +                                    v_scale=layer._v_scale_float,
 +                                )
 +                            else:
 +                                group.wrapper.run(
 +                                    group_query,
-+                                    kv_cache_permute,
++                                    kv_cache_for_fi,
++                                    q_scale=layer._q_scale_float,
 +                                    k_scale=layer._k_scale_float,
 +                                    v_scale=layer._v_scale_float,
 +                                    out=group_out,
 +                                    kv_cache_sf=kv_cache_sf,
 +                                )
-+                            out_prefill.index_copy_(
-+                                0, group.token_indices, group_out
-+                            )
++                            out_prefill.index_copy_(0, group.token_indices, group_out)
 +                    elif self.vo_split > 1:
-+                        # head_size > 256: run ceil(head_size/256) passes,
-+                        # each over a head-dim slice of the 512-wide V cache,
-+                        # and concatenate the per-pass outputs. The wrapper is
-+                        # planned with head_dim_vo = head_size // vo_split.
 +                        if self.is_kvcache_nvfp4:
-+                            assert isinstance(kv_cache_permute, tuple)
++                            assert isinstance(kv_cache_for_fi, tuple)
 +                            assert isinstance(kv_cache_sf, tuple)
 +                        self._run_vo_split_prefill(
 +                            prefill_wrapper,
 +                            prefill_query,
-+                            kv_cache_permute,
++                            kv_cache_for_fi,
 +                            kv_cache_sf,
 +                            out_prefill,
++                            q_scale=layer._q_scale_float,
 +                            k_scale=layer._k_scale_float,
 +                            v_scale=layer._v_scale_float,
 +                        )
 +                    else:
 +                        prefill_wrapper.run(
 +                            prefill_query,
-+                            kv_cache_permute,
++                            kv_cache_for_fi,
++                            q_scale=layer._q_scale_float,
 +                            k_scale=layer._k_scale_float,
 +                            v_scale=layer._v_scale_float,
 +                            out=out_prefill,
@@ -1505,7 +1383,7 @@ index 80319003da59..beaefbdae259 100755
  
                      if needs_fp8_out_prefill:
                          output[
-@@ -1696,7 +2261,11 @@ def forward(
+@@ -1866,7 +2455,11 @@ class FlashInferImpl(AttentionImpl):
  
                  # NVFP4 trtllm kernel only supports FP8 output.
                  # Use a pre-allocated FP8 buffer and dequantize afterwards.
@@ -1518,7 +1396,7 @@ index 80319003da59..beaefbdae259 100755
                  if needs_fp8_out:
                      out = self._nvfp4_fp8_out[:num_prefill_tokens]
  
-@@ -1771,6 +2340,16 @@ def forward(
+@@ -1941,6 +2534,16 @@ class FlashInferImpl(AttentionImpl):
              decode_query = query[:num_decode_tokens]
              assert decode_query.shape[0] == num_decode_tokens
  
@@ -1532,10 +1410,10 @@ index 80319003da59..beaefbdae259 100755
 +                f"vo_split={self.vo_split}."
 +            )
 +
-             if not decode_use_trtllm:
-                 assert isinstance(attn_metadata.decode, FIDecode)
-                 decode_wrapper = attn_metadata.decode.wrapper
-@@ -1785,7 +2364,11 @@ def forward(
+             # Convert query to the expected dtype for decode if needed.
+             decode_query = self.maybe_quant_query(
+                 decode_query,
+@@ -1962,7 +2565,11 @@ class FlashInferImpl(AttentionImpl):
  
                  # NVFP4 kernel only supports FP8 output.
                  # Use a pre-allocated FP8 buffer and dequantize afterwards.
@@ -1548,7 +1426,7 @@ index 80319003da59..beaefbdae259 100755
                  if needs_fp8_out:
                      out_decode = self._nvfp4_fp8_out[:num_decode_tokens]
                  else:
-@@ -1869,7 +2452,11 @@ def forward(
+@@ -2052,7 +2659,11 @@ class FlashInferImpl(AttentionImpl):
  
                  # NVFP4 trtllm kernel only supports FP8 output.
                  # Use a pre-allocated FP8 buffer and dequantize afterwards.

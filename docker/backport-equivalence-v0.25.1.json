@@ -1,0 +1,92 @@
+{
+  "release_base": "752a3a504485790a2e8491cacbb35c137339ad34",
+  "upstream_pr_head": "dfed053c9e5cddc2ea35939e5dcf439f69290a57",
+  "release_fixes_preserved": true,
+  "release_only_preserved": [
+    "v0.25.1 mixed-dtype allreduce/RMSNorm guard (#48330)",
+    "v0.25.1 AttentionMetadataBuilder._init_reorder_batch_threshold contract",
+    "v0.25.1 kv_cache_permute forward-path variable/stride canonicalization"
+  ],
+  "commits": [
+    {
+      "sha": "752d9d1caaa4e9774b724bd270a176da6f15c801",
+      "subject": "[Attention] NVFP4 KV cache on consumer Blackwell (sm120/sm121) via FlashInfer FA2",
+      "status": "ported",
+      "evidence": "ported: SM120/121 FA2 routing, cache writer, scales, config and env are absent from stock v0.25.1"
+    },
+    {
+      "sha": "69cbfb5ec89120e451f75a6f96808e844998f404",
+      "subject": "[Attention] Gemma 4 NVFP4 KV: FA2 VO-split two-pass prefill on consumer Blackwell",
+      "status": "ported",
+      "evidence": "ported: VO-split prefill support absent; adapted to v0.25.1 reorder-threshold helper"
+    },
+    {
+      "sha": "7da1920570e6e09fd31031e73fd739e7dd70133d",
+      "subject": "[Quantization] compressed-tensors: accept NVFP4 (num_bits=4) KV cache scheme",
+      "status": "ported",
+      "evidence": "ported: compressed-tensors 4-bit KV scheme acceptance absent"
+    },
+    {
+      "sha": "679fea686e87bf3639afd9df4a2142ae411ae3d2",
+      "subject": "[Attention] Gemma 3/4 multimodal: NVFP4 KV mm-prefix span masking on FA2",
+      "status": "ported",
+      "evidence": "ported: mm-prefix group/mask handling absent; v0.25.1 forward variable names preserved"
+    },
+    {
+      "sha": "9e81629716bb7746388f81e3cf4d4eb3aea6ef4c",
+      "subject": "[Test] NVFP4 VO-split factor + Gemma 3/4 mm-prefix mask unit tests",
+      "status": "ported",
+      "evidence": "ported: focused routing and VO-split unit tests absent"
+    },
+    {
+      "sha": "5b1204bef3f042bf9adf7bfc3459f86ec5ebd48d",
+      "subject": "[Attention] NVFP4 KV: use cached get_device_prop() for arch check",
+      "status": "ported",
+      "evidence": "ported: cached device-property architecture check absent"
+    },
+    {
+      "sha": "dfed053c9e5cddc2ea35939e5dcf439f69290a57",
+      "subject": "[Attention] FlashInfer: resolve HND KV cache layout for NVFP4 on sm12x",
+      "status": "ported",
+      "evidence": "ported: mandatory HND layout resolution/fail-closed guard absent"
+    }
+  ],
+  "files": [
+    {
+      "path": "csrc/libtorch_stable/nvfp4_kv_cache_kernels.cu",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "tests/v1/attention/test_gemma4_nvfp4_flashinfer_routing.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "tests/v1/attention/test_nvfp4_flashinfer_vosplit_mm.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "vllm/envs.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "vllm/model_executor/models/config.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    },
+    {
+      "path": "vllm/v1/attention/backends/flashinfer.py",
+      "status": "ported",
+      "evidence": "Missing NVFP4-SM12x PR semantics added by cumulative release patch; release-only surrounding behavior preserved."
+    }
+  ],
+  "cumulative_patch": "docker/vllm-pr46329-v0.25.1.diff"
+}

@@ -175,7 +175,7 @@ COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/audit_runtime.py /usr/local/bin/audit_runtime.py
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/audit_runtime.py \
     && command -v vllm \
-    && vllm --version \
+    && python3 -c 'import importlib.metadata as md; assert md.version("vllm") == "0.25.1+r0b0tlab.w4a4.1", md.version("vllm")' \
     && python3 -m pip check
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

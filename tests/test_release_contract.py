@@ -82,6 +82,9 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertNotIn("import vllm._C_stable_libtorch", builder_block)
         runtime_audit = (ROOT / "scripts" / "audit_runtime.py").read_text()
         self.assertIn('("vllm._C_stable_libtorch", "vllm._moe_C_stable_libtorch")', runtime_audit)
+        runtime_stage = text[text.index("FROM ubuntu:24.04 AS runtime") :]
+        self.assertNotIn("&& vllm --version", runtime_stage)
+        self.assertIn('import importlib.metadata as md; assert md.version("vllm")', runtime_stage)
         runtime = json.loads((ROOT / "docker" / "runtime-manifest.production.json").read_text())
         self.assertEqual(runtime["profile"], "production-fp8")
         self.assertEqual(runtime["vllm_package_version"], "0.25.1+r0b0tlab.w4a4.1")

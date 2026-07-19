@@ -1,17 +1,18 @@
 recipe_version: "2"
-name: qwen3.6-27b-nvfp4-kv-vllm-r0b0tlab
-description: Qwen3.6-27B native NVFP4 on one GB10 with experimental NVFP4 KV
+name: qwen3.6-27b-nvfp4-vllm-r0b0tlab
+description: Qwen3.6-27B native NVFP4 weights on one GB10 with production FP8 KV
 model: nvidia/Qwen3.6-27B-NVFP4
 model_revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
 runtime: vllm
 runtime_version: "0.25.1"
 container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-kv-exp
+min_nodes: 1
 max_nodes: 1
 metadata:
   maintainer: r0b0tlab
   model_params: 27B
   model_dtype: nvfp4
-  kv_dtype: nvfp4
+  kv_dtype: fp8
   quantization: nvfp4
   quant_bits: 4
 defaults:
@@ -23,18 +24,17 @@ defaults:
   max_num_batched_tokens: 8192
   gpu_memory_utilization: 0.90
   served_model_name: nvidia/Qwen3.6-27B-NVFP4
-  speculative_config: '{"method":"qwen3_next_mtp","num_speculative_tokens":2}'
+  speculative_config: '{"method":"qwen3_next_mtp","num_speculative_tokens":1}'
 env:
   R0B0TLAB_QWEN27_NATIVE_W4A4: "1"
   VLLM_ATTENTION_BACKEND: FLASHINFER
-  VLLM_KV_CACHE_LAYOUT: HND
   FLASHINFER_NVCC_THREADS: "2"
 command: |
   vllm serve {model} --served-model-name {served_model_name} \
     --host {host} --port {port} -tp {tensor_parallel} --dtype bfloat16 \
-    --kv-cache-dtype nvfp4 --max-model-len {max_model_len} \
+    --kv-cache-dtype fp8 --max-model-len {max_model_len} \
     --max-num-seqs {max_num_seqs} --max-num-batched-tokens {max_num_batched_tokens} \
-    --gpu-memory-utilization {gpu_memory_utilization} --enable-prefix-caching \
+    --gpu-memory-utilization {gpu_memory_utilization} \
     --language-model-only --speculative-config '{speculative_config}'
 executor_config:
   auto_remove: false

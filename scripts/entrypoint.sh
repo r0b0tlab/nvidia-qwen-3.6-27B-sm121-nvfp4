@@ -2,7 +2,9 @@
 # Qwen3.6-27B NVFP4 launch contract for GB10 / SM121.
 set -euo pipefail
 
-/usr/local/bin/audit_runtime.py
+if [[ "${1:-}" == "audit" ]]; then
+    exec /usr/local/bin/audit_runtime.py
+fi
 
 # Preserve Docker/sparkrun command semantics. In particular, sparkrun passes
 # `bash -c <serve command>` after the image entrypoint.
@@ -17,11 +19,11 @@ PORT="${PORT:-8000}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-32}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
-KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-nvfp4}"
-MTP_TOKENS="${MTP_TOKENS:-2}"
+KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
+MTP_TOKENS="${MTP_TOKENS:-1}"
 
+export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASHINFER}"
 if [[ "$KV_CACHE_DTYPE" == "nvfp4" ]]; then
-    export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASHINFER}"
     export VLLM_KV_CACHE_LAYOUT="${VLLM_KV_CACHE_LAYOUT:-HND}"
 fi
 
@@ -36,7 +38,6 @@ args=(
     --max-model-len "$MAX_MODEL_LEN"
     --max-num-seqs "$MAX_NUM_SEQS"
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
-    --enable-prefix-caching
     --language-model-only
 )
 

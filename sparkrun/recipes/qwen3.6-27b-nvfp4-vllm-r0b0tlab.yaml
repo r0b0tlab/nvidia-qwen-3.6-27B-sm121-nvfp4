@@ -28,12 +28,11 @@ defaults:
 env:
   R0B0TLAB_QWEN27_NATIVE_W4A4: "1"
   R0B0TLAB_NVFP4_KV_ENABLED: "0"
-  VLLM_ATTENTION_BACKEND: FLASHINFER
   FLASHINFER_NVCC_THREADS: "2"
 command: |
   vllm serve {model} --served-model-name {served_model_name} \
     --host {host} --port {port} -tp {tensor_parallel} --dtype bfloat16 \
-    --kv-cache-dtype fp8 --max-model-len {max_model_len} \
+    --attention-backend FLASHINFER --kv-cache-dtype fp8 --max-model-len {max_model_len} \
     --max-num-seqs {max_num_seqs} --max-num-batched-tokens {max_num_batched_tokens} \
     --gpu-memory-utilization {gpu_memory_utilization} \
     --language-model-only --reasoning-parser qwen3 \

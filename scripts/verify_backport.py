@@ -76,7 +76,9 @@ def validate(root: Path) -> list[str]:
         "MAX_JOBS=6",
         "NVCC_THREADS=2",
         "FLASHINFER_NVCC_THREADS=2",
-        "VLLM_VERSION_OVERRIDE=0.25.1",
+        "ARG VLLM_TAG=v0.25.1",
+        'refs/tags/${VLLM_TAG}:refs/tags/${VLLM_TAG}',
+        "describe --tags --exact-match HEAD",
         "--no-build-isolation --no-deps .",
         "git apply --check /tmp/vllm-pr46329-v0.25.1.diff",
         "git apply --check /tmp/native-w4a4-qwen27-v0.25.1.diff",
@@ -89,6 +91,8 @@ def validate(root: Path) -> list[str]:
         failures.append("Dockerfile contains a silent FlashInfer fallback")
     if runtime.get("vllm_commit") != RELEASE:
         failures.append("runtime manifest vLLM commit mismatch")
+    if runtime.get("vllm_tag") != "v0.25.1":
+        failures.append("runtime manifest vLLM tag mismatch")
     if runtime.get("flashinfer_commit") != FLASHINFER:
         failures.append("runtime manifest FlashInfer commit mismatch")
     if runtime.get("model_revision") != MODEL:

@@ -6,6 +6,7 @@
 FROM ubuntu:24.04 AS builder
 
 ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
+ARG VLLM_TAG=v0.25.1
 ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -41,9 +42,13 @@ RUN /usr/bin/python3 -m venv /opt/vllm \
         torch==2.11.0 torchvision==0.26.0 torchaudio \
         --index-url https://download.pytorch.org/whl/cu130
 
-RUN git clone --filter=blob:none https://github.com/vllm-project/vllm.git /workspace/vllm-src \
-    && git -C /workspace/vllm-src checkout --detach ${VLLM_COMMIT} \
-    && test "$(git -C /workspace/vllm-src rev-parse HEAD)" = "${VLLM_COMMIT}"
+RUN git init /workspace/vllm-src \
+    && git -C /workspace/vllm-src remote add origin https://github.com/vllm-project/vllm.git \
+    && git -C /workspace/vllm-src fetch --filter=blob:none --depth=1 origin \
+        "refs/tags/${VLLM_TAG}:refs/tags/${VLLM_TAG}" \
+    && git -C /workspace/vllm-src checkout --detach "refs/tags/${VLLM_TAG}" \
+    && test "$(git -C /workspace/vllm-src rev-parse HEAD)" = "${VLLM_COMMIT}" \
+    && test "$(git -C /workspace/vllm-src describe --tags --exact-match HEAD)" = "${VLLM_TAG}"
 
 WORKDIR /workspace/vllm-src
 
@@ -72,8 +77,11 @@ RUN git apply --check /tmp/vllm-pr46329-v0.25.1.diff \
     && git apply /tmp/native-w4a4-qwen27-v0.25.1.diff \
     && git diff --check
 
-RUN VLLM_VERSION_OVERRIDE=0.25.1 python3 -m pip install --no-build-isolation --no-deps . \
-    && python3 - <<'PY'
+RUN python3 -m pip install --no-build-isolation --no-deps .
+
+# Keep the expensive wheel build in its own cacheable layer. If an identity
+# assertion changes or fails, a retry must not discard the completed compile.
+RUN python3 - <<'PY'
 import importlib.metadata as md
 import subprocess
 import torch
@@ -91,6 +99,7 @@ PY
 FROM ubuntu:24.04 AS runtime
 
 ARG VLLM_COMMIT=752a3a504485790a2e8491cacbb35c137339ad34
+ARG VLLM_TAG=v0.25.1
 ARG FLASHINFER_COMMIT=741b63720bb345d9036d38b33a7b5a043d4c2674
 ARG IMAGE_REVISION=uncommitted
 
@@ -133,6 +142,7 @@ LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 NVFP4 vLLM runtime" \
       org.opencontainers.image.version="0.25.1-kv-exp" \
       org.opencontainers.image.licenses="MIT AND Apache-2.0" \
       io.r0b0tlab.upstream.vllm.revision="${VLLM_COMMIT}" \
+      io.r0b0tlab.upstream.vllm.tag="${VLLM_TAG}" \
       io.r0b0tlab.upstream.flashinfer.revision="${FLASHINFER_COMMIT}" \
       io.r0b0tlab.model.id="nvidia/Qwen3.6-27B-NVFP4" \
       io.r0b0tlab.model.revision="0893e1606ff3d5f97a441f405d5fc541a6bdf404"

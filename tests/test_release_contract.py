@@ -29,10 +29,6 @@ class ReleaseContractTests(unittest.TestCase):
             failures = validate(clone)
             self.assertTrue(any("vLLM commit mismatch" in x for x in failures))
 
-    def test_exact_release_version_override_is_pinned(self) -> None:
-        dockerfile = (ROOT / "docker" / "Dockerfile.kv-exp").read_text()
-        self.assertIn("VLLM_VERSION_OVERRIDE=0.25.1", dockerfile)
-
     def test_patch_scope_mutation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             clone = Path(tmp) / "repo"
@@ -45,6 +41,20 @@ class ReleaseContractTests(unittest.TestCase):
             )
             failures = validate(clone)
             self.assertTrue(any("outside modelopt.py" in x for x in failures))
+
+    def test_dockerfile_fetches_and_verifies_exact_release_tag(self) -> None:
+        text = (ROOT / "docker" / "Dockerfile.kv-exp").read_text()
+        self.assertIn("ARG VLLM_TAG=v0.25.1", text)
+        self.assertIn('refs/tags/${VLLM_TAG}:refs/tags/${VLLM_TAG}', text)
+        self.assertIn("describe --tags --exact-match HEAD", text)
+        self.assertIn('io.r0b0tlab.upstream.vllm.tag="${VLLM_TAG}"', text)
+        runtime = json.loads((ROOT / "docker" / "runtime-manifest.json").read_text())
+        self.assertEqual(runtime["vllm_tag"], "v0.25.1")
+
+        install = "RUN python3 -m pip install --no-build-isolation --no-deps ."
+        audit = "RUN python3 - <<'PY'"
+        self.assertLess(text.index(install), text.index(audit))
+        self.assertNotIn(install + " \\\n    && python3", text)
 
 
 if __name__ == "__main__":

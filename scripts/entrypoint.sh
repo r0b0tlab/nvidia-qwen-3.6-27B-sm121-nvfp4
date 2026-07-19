@@ -33,9 +33,10 @@ MODEL_PATH="${MODEL_PATH:-/models/nvidia-Qwen3.6-27B-NVFP4}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-nvidia/Qwen3.6-27B-NVFP4}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-32}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.75}"
 MTP_TOKENS="${MTP_TOKENS:-1}"
 
 export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASHINFER}"
@@ -50,14 +51,18 @@ args=(
     --kv-cache-dtype "$KV_CACHE_DTYPE"
     --max-model-len "$MAX_MODEL_LEN"
     --max-num-seqs "$MAX_NUM_SEQS"
+    --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
     --language-model-only
+    --reasoning-parser qwen3
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_xml
 )
 
 if [[ "$MTP_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
     args+=(
         --speculative-config
-        "{\"method\":\"qwen3_next_mtp\",\"num_speculative_tokens\":${MTP_TOKENS}}"
+        "{\"method\":\"mtp\",\"num_speculative_tokens\":${MTP_TOKENS}}"
     )
 fi
 

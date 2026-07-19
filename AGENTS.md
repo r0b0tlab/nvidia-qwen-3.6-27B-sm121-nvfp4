@@ -20,7 +20,9 @@ NVFP4 KV is not a production default because matched quality evidence has not cl
 - Model revision: `0893e1606ff3d5f97a441f405d5fc541a6bdf404`
 - Quantization: calibrated native `modelopt_mixed` W4A4/W4A16 routing; no Marlin or emulation fallback
 - Production KV cache: FP8
-- Production speculative decoding: `qwen3_next_mtp`, one speculative token
+- Production speculative decoding: `mtp`, one speculative token
+- Validated production serving envelope: 8,192-token configured context, 32 sequences, 8,192 batched tokens, 0.75 GPU-memory utilization
+- OpenAI chat parsers: `qwen3` reasoning and `qwen3_xml` tool calls
 - Prefix caching: disabled
 
 `docker/runtime-manifest.json` and `docker/backport-equivalence-v0.25.1.json` are the machine-readable
@@ -103,11 +105,13 @@ Synthetic harness tests are scaffold evidence only; they are not runtime or benc
 ## File Map
 
 ```text
-docker/Dockerfile.kv-exp                     vLLM 0.25.1 + CUDA 13.0 source build
-docker/vllm-pr46329-v0.25.1.diff             reviewed NVFP4-KV release port
+docker/Dockerfile.production                 vLLM 0.25.1 production FP8-KV source build
+docker/Dockerfile.kv-exp                     separate NVFP4-KV experimental source build
+docker/vllm-pr46329-v0.25.1.diff             reviewed NVFP4-KV release port (experimental image only)
 docker/native-w4a4-qwen27-v0.25.1.diff       calibrated native Qwen weight-routing port
 docker/backport-equivalence-v0.25.1.json     commit/path equivalence map
-docker/runtime-manifest.json                 pinned release identity
+docker/runtime-manifest.production.json      production FP8-KV release identity
+docker/runtime-manifest.json                 experimental NVFP4-KV release identity
 scripts/entrypoint.sh                         audit + command-driven launch contract
 scripts/audit_runtime.py                      fail-closed runtime audit
 scripts/benchmark_nvfp4_kv.py                 streaming benchmark and telemetry harness

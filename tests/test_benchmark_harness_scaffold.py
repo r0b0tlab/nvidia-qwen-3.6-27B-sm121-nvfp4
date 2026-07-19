@@ -102,6 +102,30 @@ class BenchmarkHarnessScaffoldTests(unittest.TestCase):
         self.assertEqual(result["token_count_source"], "nonempty_chunks_fallback")
         self.assertTrue(any("no usage event" in error for error in result["errors"]))
 
+    def test_vllm_reasoning_delta_is_measured_as_stream_output(self) -> None:
+        def opener(request, timeout):
+            return FakeResponse(
+                [
+                    b'data: {"choices":[{"delta":{"reasoning":"think"}}]}\n',
+                    b'data: {"choices":[{"delta":{"content":"133"}}]}\n',
+                    b'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}\n',
+                    b"data: [DONE]\n",
+                ]
+            )
+
+        result = harness.stream_chat(
+            "http://127.0.0.1:18080",
+            "demo-model",
+            "compute",
+            opener=opener,
+            clock=IncrementingClock(),
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["response_text"], "think133")
+        self.assertEqual(result["completion_tokens"], 2)
+        self.assertEqual(len(result["itl_seconds"]), 1)
+
     def test_incomplete_usage_is_an_explicit_error(self) -> None:
         def opener(request, timeout):
             return FakeResponse(

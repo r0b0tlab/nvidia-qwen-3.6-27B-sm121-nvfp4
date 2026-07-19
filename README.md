@@ -1,268 +1,164 @@
-# NVIDIA Qwen3.6-27B NVFP4 — SM121 Native Serving
+# NVIDIA Qwen3.6-27B NVFP4 on GB10 / SM121
 
-Optimized vLLM v0.24.0 runtime for **nvidia/Qwen3.6-27B-NVFP4** on NVIDIA GB10 / SM121 (DGX Spark),
-with **FP8 KV cache**, **MTP speculative decoding**, and **native NVFP4 weight quantization**.
+A reproducible, source-built vLLM 0.25.1 runtime for `nvidia/Qwen3.6-27B-NVFP4` on one NVIDIA GB10 / DGX Spark.
 
-> **KV Cache Update (2026-07-03):** The runtime currently uses **FP8 KV cache** (`--kv-cache-dtype fp8`).
-> NVFP4 KV cache support is under active development — a FlashInfer attention kernel patch is in
-> progress to enable proper FP4 dequantization on SM120/121. Until then, FP8 KV is the recommended
-> configuration for correct output quality.
+The production profile is intentionally narrow:
 
-## Highlights
+- native calibrated NVFP4 W4A4 weight kernels on SM121
+- FP8 KV cache
+- FlashInfer attention
+- MTP with one speculative token
+- no Marlin, emulation, or weight-only fallback
+- an 8,192-token validated serving profile
+- Qwen reasoning and XML tool-call parsers
 
-| Metric | FP8 KV Baseline | Notes |
-|---|---|---|
-| **KV Cache Dtype** | fp8 | NVFP4 KV pending FlashInfer patch |
-| **MTP** | ✅ (1 spec token) | 88–93% acceptance rate |
-| **c1 decode** | 19.15 tok/s | |
-| **GSM8K (0-shot, flexible-extract)** | **81.88%** | 1319 samples, full test set |
+NVFP4 KV remains a separate experiment. It is not enabled in the production image and is not claimed as quality-safe here.
 
-### Throughput (FP8 KV + MTP, 256-token generation, 8K context)
+## Release identity
 
-| Concurrency | Output tok/s | Power (W) | Efficiency (J/1K tok) | Temp (°C) |
-|---:|---:|---:|---:|---:|
-| 1 | 19.15 | 34.3 | 1,793 | 60.5 |
-| 4 | 69.62 | 32.3 | 465 | 60.8 |
-| 8 | 102.76 | 36.9 | 359 | 62.7 |
-| 16 | 144.00 | 38.9 | 270 | 64.7 |
-| 32 | 248.40 | 44.2 | 178 | 67.6 |
+| Component | Pinned identity |
+|---|---|
+| Model | `nvidia/Qwen3.6-27B-NVFP4` |
+| Model revision | `0893e1606ff3d5f97a441f405d5fc541a6bdf404` |
+| vLLM | `v0.25.1`, commit `752a3a504485790a2e8491cacbb35c137339ad34` |
+| vLLM package | `0.25.1+r0b0tlab.w4a4.1` |
+| FlashInfer | `0.6.13` |
+| PyTorch | `2.11.0+cu130` |
+| CUDA | 13.0 |
+| Target | Linux aarch64, NVIDIA GB10, compute capability 12.1 |
+| Production KV | FP8 |
+| Production MTP | `{"method":"mtp","num_speculative_tokens":1}` |
 
-### GSM8K Accuracy (Full 1319-Sample Evaluation)
+The checkpoint-scoped W4A4 reroute is recorded in `docker/native-w4a4-qwen27-v0.25.1.diff`. It uses the checkpoint's finite calibrated `input_scale` tensors with vLLM's native NVFP4 W4A4 kernel. Routed and ordinary linear paths were admitted only after logs showed native FlashInfer/CUTLASS selection and zero `MarlinNvFp4`, `Using 'MARLIN'`, or emulation markers.
 
-| Protocol | Score | Details |
-|---|---|---|
-| **0-shot, flexible-extract** | **81.88%** | lm-eval 0.4.12, completions endpoint, max_gen_toks=2048 |
-| 8-shot, flexible-extract | 76.80% | Same protocol, 8-shot priming |
+## Prebuilt image
 
-Evaluation: lm-evaluation-harness, `local-completions` model, temperature=0, FP8 KV cache,
-1,162,353 KV cache tokens, max concurrency 141.89x at 8K context.
-
-### GSM8K Full-Set Accuracy — lm-eval-harness
-
-Reported metric is **flexible-extract exact match**. Strict-match is preserved in the raw artifacts but is not the headline metric.
-
-| Run | Samples | N-shot | Endpoint | Score | Stderr | Artifacts |
-|---|---:|---:|---|---:|---:|---|
-| Qwen3.6-27B NVFP4 | 1,319 | 0 | completions | **81.88%** | ±1.06% | `results/gsm8k-full-0shot-node2-20260703/` |
-| Qwen3.6-27B NVFP4 | 1,319 | 8 | completions | **76.80%** | ±1.16% | `results/gsm8k-full-8shot-20260703/` |
-
-Each GSM8K artifact directory contains the lm-eval aggregate JSON, public-safety-sanitized sample JSONL, run log, and SHA256 manifest.
-
-### Sanity Suite (5/5 passed)
-
-| Test | Tokens | Latency |
-|---|---|---|
-| Math (17×23) | 32 | 1.72s |
-| Code (reverse string) | 64 | 3.26s |
-| Logical reasoning (syllogism) | 64 | 3.28s |
-| Factual (capital of Australia) | 32 | 1.72s |
-| Instruction-following (3 colors) | 32 | 1.71s |
-
----
-
-## The Six Fixes
-
-Building a working NVFP4 KV cache runtime on SM121 required solving six distinct issues. Each one
-blocked the container from starting — this section documents what broke, why, and how it was fixed.
-
-### Fix 1: OOM Killer During Build → `MAX_JOBS=6`
-
-**Symptom:** Docker build killed at 94–101/371 CUDA objects. No error message — build process just died.
-
-**Root Cause:** The Dockerfile set `MAX_JOBS=20`, spawning 20 parallel `nvcc` processes (~40 GB RAM spike).
-The system has 121 GB RAM, but `hermes-gateway.service` has `oom_score_adj=200`, making it the OOM
-killer's first target. `dmesg` confirmed: `oom-kill: task_memcg=.../hermes-gateway.service`.
-
-**Fix:** Changed `ENV MAX_JOBS=20` → `ENV MAX_JOBS=6` + added `ENV NVCC_THREADS=2`. Peak RAM dropped
-from ~40 GB to ~15 GB. Build completed all 371 objects in ~57 minutes.
-
-```dockerfile
-ENV MAX_JOBS=6
-ENV NVCC_THREADS=2
+```bash
+docker pull ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production
 ```
 
-### Fix 2: Missing Python Packages → Bulk Site-Packages COPY
+The image is source-built for CUDA 13.0 / SM121 and includes the compiler, Ninja, CUDA development headers, and bounded FlashInfer JIT settings required at runtime.
 
-**Symptom:** Container crashed at startup with `ModuleNotFoundError: No module named 'zmq'`, then
-`urllib3`, then cascading failures.
+Run the fail-closed audit:
 
-**Root Cause:** The runtime stage tried to COPY individual packages (torch, vllm, flashinfer) from
-the builder. But vLLM has deep dependency trees — each missing import revealed another missing dep.
-
-**Fix:** Replaced all individual COPY lines with a single bulk copy of the entire site-packages:
-
-```dockerfile
-COPY --from=builder /usr/local/lib/python3.12/dist-packages/ /usr/local/lib/python3.12/dist-packages/
+```bash
+docker run --rm --gpus all \
+  ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production audit
 ```
 
-Brute force, but complete. Image stayed at ~13 GB (deduplicated layer).
+Serve a local model checkout:
 
-### Fix 3: PTX Version Mismatch → CUDA 13.0 Toolkit (not 13.2)
-
-**Symptom:** Container started, model weights began loading, then crashed at
-`marlin_utils_fp4.py:264` in `prepare_fp4_layer_for_marlin` with:
-`torch.AcceleratorError: CUDA error: the provided PTX was compiled with an unsupported toolchain`
-
-**Root Cause:** The builder installed `cuda-toolkit-13-2` (nvcc 13.2), but PyTorch 2.11.0 ships with
-CUDA 13.0 runtime. PTX compiled by nvcc 13.2 cannot execute on a CUDA 13.0 driver — the PTX ISA
-version is higher than the runtime supports.
-
-**Fix:** Changed `cuda-toolkit-13-2` → `cuda-toolkit-13-0`. This required a **full rebuild** from
-scratch (the CUDA toolkit layer is early in the Dockerfile, invalidating all subsequent layers
-including the 371-object compile).
-
-### Fix 4: No C Compiler at Runtime → `build-essential`
-
-**Symptom:** Model weights loaded successfully. Crash during FlashInfer JIT compilation:
-`Failed to find C compiler`
-
-**Root Cause:** FlashInfer uses JIT compilation at runtime to generate SM121-specific kernels. The
-runtime image only installed `python3.12` — no `gcc` or `cc`. The builder stage had `build-essential`
-but those weren't copied to runtime.
-
-**Fix:** Added `build-essential` to the runtime stage's `apt-get install`.
-
-### Fix 5: No Ninja Build Tool → `ninja-build`
-
-**Symptom:** Weights loaded, JIT attempted, crash at KV cache initialization:
-`RuntimeError: ninja: not found`
-
-**Root Cause:** FlashInfer's JIT uses `ninja` as its build system. The runtime image didn't include it.
-
-**Fix:** Added `ninja-build` to the runtime stage's `apt-get install`.
-
-### Fix 6: Missing CUDA Dev Headers → `cuda-libraries-dev-13-0`
-
-**Symptom:** Ninja found, compilation started, crash at FlashInfer kernel JIT:
-`curand_kernel.h: No such file or directory`
-
-**Root Cause:** FlashInfer's JIT kernels `#include` CUDA development headers (`curand_kernel.h`,
-etc.) at runtime. The runtime image had CUDA runtime libraries but not dev headers.
-
-**Fix:** Added `cuda-nvcc-13-0` + `cuda-libraries-dev-13-0` to the runtime stage:
-
-```dockerfile
-cuda-nvcc-13-0 cuda-libraries-dev-13-0
+```bash
+docker run --rm --gpus all --ipc=host \
+  --name qwen36-27b \
+  -p 18080:8000 \
+  -v /path/to/nvidia-Qwen3.6-27B-NVFP4:/models/model:ro \
+  ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production \
+  vllm serve /models/model \
+    --served-model-name Qwen3.6-27B-NVFP4 \
+    --host 0.0.0.0 --port 8000 --tensor-parallel-size 1 \
+    --dtype bfloat16 --attention-backend FLASHINFER \
+    --kv-cache-dtype fp8 --max-model-len 8192 \
+    --max-num-seqs 32 --max-num-batched-tokens 8192 \
+    --gpu-memory-utilization 0.75 --language-model-only \
+    --speculative-config '{"method":"mtp","num_speculative_tokens":1}' \
+    --reasoning-parser qwen3 \
+    --enable-auto-tool-choice --tool-call-parser qwen3_xml
 ```
 
----
+The entrypoint audits the runtime before either its zero-argument default launch or an explicit command, preserves argument boundaries with `exec "$@"`, and returns the child process's exact exit code. The production image rejects `--kv-cache-dtype nvfp4` before model load.
 
-## Build & Run
+## sparkrun
 
-### Build from Source
+The repository includes a v2 recipe with the model revision, image tag, and tested production defaults pinned:
+
+```bash
+sparkrun registry add https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4
+sparkrun recipe validate @r0b0tlab/qwen3.6-27b-nvfp4-vllm-r0b0tlab
+sparkrun run @r0b0tlab/qwen3.6-27b-nvfp4-vllm-r0b0tlab --solo
+```
+
+Recipe source: `sparkrun/recipes/qwen3.6-27b-nvfp4-vllm-r0b0tlab.yaml`.
+
+## v0.25.1 production qualification
+
+Measured on one GB10 with the exact production image, model revision, FP8 KV, MTP K=1, 8K configured context, and Qwen reasoning/tool parsers. Each concurrency has one warmup plus three measured repeats with 256 completion tokens per request. All 189 measured requests completed successfully.
+
+Client completion throughput includes both parsed reasoning and final-content tokens reported by the OpenAI-compatible usage object.
+
+| Concurrency | Client completion tok/s, median | Three-repeat range | Mean power | Median p50 TTFT | Median p50 ITL |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 18.25 | 17.79–18.25 | 40.37 W | 343 ms | 102 ms |
+| 2 | 35.25 | 35.13–36.38 | 41.07 W | 317 ms | 104 ms |
+| 4 | 66.69 | 64.80–69.44 | 41.52 W | 343 ms | 109 ms |
+| 8 | 118.29 | 118.02–121.85 | 43.84 W | 392 ms | 121 ms |
+| 16 | 168.91 | 166.03–221.99 | 47.45 W | 498 ms | 178 ms |
+| 32 | 322.93 | 195.55–328.41 | 53.93 W | 1,097 ms | 171 ms |
+
+Additional runtime evidence:
+
+- MTP accepted 32,130 of 34,724 drafted tokens: 92.53%
+- FP8 KV capacity: 884,736 tokens
+- available KV memory: 66.57 GiB
+- reported maximum concurrency: 108.00× at 8,192 tokens/request
+- streaming transport sanity: 5/5
+- reasoning parser and `qwen3_xml` tool-call parser: passed live API canaries
+- benchmark errors: zero; warmup errors: zero
+
+The full raw qualification is intentionally kept as machine-local evidence rather than committed telemetry. The public harness and synthetic parser tests are included so the procedure can be reproduced without publishing host-specific paths or logs.
+
+## Accuracy evidence and claim boundary
+
+The unchanged model has a retained full-set GSM8K 0-shot flexible-extract result of **81.88%** from the earlier v0.24.0 FP8-KV/MTP campaign. Its public aggregate, samples, log, and SHA-256 manifest remain under `results/gsm8k-full-0shot-node2-20260703/`.
+
+That historical score is model evidence, not a newly measured v0.25.1 headline. This update changed the serving runtime and native linear-kernel routing, so the current release relies on deterministic semantics, parser/tool canaries, context retrieval, long generation, and the measured concurrency ramp. It does not imply that the historical GSM8K score was rerun on the new image.
+
+## Build from source
 
 ```bash
 git clone https://github.com/r0b0tlab/nvidia-qwen-3.6-27B-sm121-nvfp4.git
 cd nvidia-qwen-3.6-27B-sm121-nvfp4
 
-# ~60 min with MAX_JOBS=6 on GB10
-docker build -f docker/Dockerfile.kv-exp -t sm121-vllm-v0240-nvfp4:kv-exp .
+docker build --progress=plain \
+  --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" \
+  -f docker/Dockerfile.production \
+  -t qwen27-vllm:0.25.1-production .
 ```
 
-### Serve with NVFP4 KV Cache + MTP
+Important build/runtime constraints:
+
+- `MAX_JOBS=6`, `NVCC_THREADS=2`, and `FLASHINFER_NVCC_THREADS=2`
+- CUDA toolkit 13.0, matching PyTorch cu130
+- exact vLLM tag and commit verification before compilation
+- full runtime compiler and CUDA development toolchain for FlashInfer JIT
+- separate production and experimental Dockerfiles
+
+Run repository gates:
 
 ```bash
-docker run -d --gpus all --ipc=host --name sm121-vllm \
-  -p 18080:8000 \
-  -v /path/to/nvidia-Qwen3.6-27B-NVFP4:/models/model:ro \
-  -e SERVED_MODEL_NAME="Qwen3.6-27B-NVFP4" \
-  -e MAX_MODEL_LEN=8192 \
-  -e KV_CACHE_DTYPE=nvfp4 \
-  -e SPECULATIVE_CONFIG='{"method":"mtp","num_speculative_tokens":1}' \
-  sm121-vllm-v0240-nvfp4:kv-exp
+python3 scripts/public_safety_scan.py .
+bash -n scripts/entrypoint.sh
+python3 -m py_compile scripts/*.py tests/*.py
+python3 tests/test_release_contract.py
+python3 tests/test_launch_contract.py
+python3 tests/test_benchmark_harness_scaffold.py
+python3 tests/test_dependency_check.py
+python3 scripts/verify_backport.py .
 ```
 
-### Run the Benchmark
+## Production versus NVFP4-KV experiment
 
-```bash
-python3 scripts/benchmark_nvfp4_kv.py \
-  --base-url http://127.0.0.1:18080 \
-  --model Qwen3.6-27B-NVFP4 \
-  --output results/benchmark.json
-```
+`docker/Dockerfile.production` uses the official vLLM 0.25.1 and FlashInfer 0.6.13 release stack plus only the checkpoint-scoped native W4A4 reroute. It hard-disables NVFP4 KV.
 
-### Runtime Audit
+`docker/Dockerfile.kv-exp` separately retains the reviewed SM120/121 NVFP4-KV release-aware port for investigation. The backport is preserved for upstream provenance and reproducibility, but it is not the production image, the sparkrun default, or a quality claim. Do not promote it without matched semantic and quality evidence.
 
-```bash
-docker run --rm --gpus all --entrypoint bash sm121-vllm-v0240-nvfp4:kv-exp audit
-```
+## Upstream credit
 
-Checks: vLLM v0.24.x, SM121 capability, stable ABI extensions, Qwen3.5 model, modelopt_mixed, NVFP4.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `SERVED_MODEL_NAME` | model | Model name for API |
-| `MAX_MODEL_LEN` | 8192 | Maximum sequence length |
-| `KV_CACHE_DTYPE` | fp8 | KV cache dtype — set to `nvfp4` for NVFP4 KV |
-| `ATTENTION_BACKEND` | flashinfer | Attention backend |
-| `GPU_MEMORY_UTILIZATION` | 0.72 | GPU memory fraction |
-| `MAX_NUM_SEQS` | 32 | Max concurrent sequences |
-| `SPECULATIVE_CONFIG` | (none) | JSON for MTP speculative decoding |
-| `QUANTIZATION` | (auto-detect) | Quantization method |
-
----
-
-## Architecture & Design Decisions
-
-### Why FA2 JIT (not trtllm-gen)
-
-trtllm-gen FP4 FMHA cubins only ship for SM100/SM103 — zero SM121 cubins exist. FA2 is JIT-compiled
-at runtime, making it the only viable SM121 NVFP4 KV path. The FlashInfer PR #3684 adds NVFP4 FA2
-kernels for SM120/121.
-
-### Why Both PRs Are Required
-
-- **FlashInfer PR #3684** alone: compiles kernels but vLLM won't route NVFP4 KV to FlashInfer on
-  CC 12.x (guard rejects non-SM100 devices)
-- **vLLM PR #46329** alone: vLLM routes correctly but FlashInfer's kernels fail on GQA group_size=6
-  and asymmetric head_dim
-
-### Prefix Caching Disabled (Correct Behavior)
-
-Qwen3.5/3.6 uses a hybrid GDN architecture with non-causal attention layers. vLLM disables prefix
-caching by design (`core.py:269`) for these models. This is not a bug — do not force-enable it.
-
-### MTP Impact on KV Capacity
-
-MTP (Multi-Token Prediction) speculative decoding reserves memory for the draft model, reducing the
-available KV cache pool. The tradeoff is:
-
-| Mode | KV Tokens | c1 tok/s | c32 tok/s |
-|---|---|---|---|
-| NVFP4 KV, 32K ctx, no MTP | 2,846,446 | 12.13 | 239.24 |
-| NVFP4 KV, 8K ctx, MTP | 1,109,560 | 19.15 | 248.40 |
-| FP8 KV, 32K ctx, MTP | 1,702,722 | 19.78 | 222.84 |
-
-Use MTP for throughput-sensitive serving; disable MTP and raise `max_model_len` for maximum
-long-context capacity.
-
----
-
-## Verified Runtime Profile
-
-- **vLLM**: v0.24.0 (source-built, `TORCH_CUDA_ARCH_LIST=12.1`)
-- **FlashInfer**: PR #3684 branch (`nvfp4-vosplit-rederive`), compiled from source
-- **Model**: nvidia/Qwen3.6-27B-NVFP4
-- **Quantization**: modelopt_mixed (MLP W4A16_NVFP4 group_size=16, attention FP8, lm_head NVFP4)
-- **KV Cache**: nvfp4 (FlashInfer FA2 JIT)
-- **Attention Backend**: FlashInfer
-- **CUDA Graphs**: PIECEWISE (MTP + FlashInfer)
-- **MTP**: Active, num_speculative_tokens=1
-- **GPU**: NVIDIA GB10 SM121, CUDA 13.0, Torch 2.11.0+cu130
-- **Image**: 15.4 GB (`sm121-vllm-v0240-nvfp4:kv-exp`)
-
----
+- [vLLM](https://github.com/vllm-project/vllm), Apache-2.0
+- [FlashInfer](https://github.com/flashinfer-ai/flashinfer), Apache-2.0
+- NVFP4-KV SM120/121 work by upstream contributor [@jethac](https://github.com/jethac), tracked through vLLM PR #46329 and the related FlashInfer work
+- [NVIDIA Qwen3.6-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.6-27B-NVFP4)
 
 ## License
 
-Scripts, Dockerfiles, and documentation: **MIT**.
-
-Model weights are not redistributed. Follow the upstream
-[nvidia/Qwen3.6-27B-NVFP4](https://huggingface.co/nvidia/Qwen3.6-27B-NVFP4) license.
-
-The FlashInfer PR #3684 and vLLM PR #46329 patches are copyrighted by their respective upstream
-authors under the Apache 2.0 license.
+Repository scripts and documentation are MIT licensed. Upstream patches retain their original Apache-2.0 licensing and authorship. Model weights are not redistributed; follow the model repository's license and terms.

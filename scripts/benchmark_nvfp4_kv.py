@@ -101,6 +101,11 @@ def _decode_sse_line(raw: bytes | str) -> str:
 def _delta_text(delta: Mapping[str, Any]) -> str:
     value = delta.get("content")
     if value is None:
+        # vLLM 0.25.1's Qwen reasoning parser streams parsed thinking in
+        # ``reasoning``. Keep the older OpenAI-compatible
+        # ``reasoning_content`` spelling as a compatibility fallback.
+        value = delta.get("reasoning")
+    if value is None:
         value = delta.get("reasoning_content")
     if isinstance(value, str):
         return value

@@ -19,12 +19,12 @@ defaults:
   host: 0.0.0.0
   port: 8000
   tensor_parallel: 1
-  max_model_len: 131072
+  max_model_len: 8192
   max_num_seqs: 32
   max_num_batched_tokens: 8192
-  gpu_memory_utilization: 0.90
+  gpu_memory_utilization: 0.75
   served_model_name: nvidia/Qwen3.6-27B-NVFP4
-  speculative_config: '{"method":"qwen3_next_mtp","num_speculative_tokens":1}'
+  speculative_config: '{"method":"mtp","num_speculative_tokens":1}'
 env:
   R0B0TLAB_QWEN27_NATIVE_W4A4: "1"
   R0B0TLAB_NVFP4_KV_ENABLED: "0"
@@ -36,7 +36,9 @@ command: |
     --kv-cache-dtype fp8 --max-model-len {max_model_len} \
     --max-num-seqs {max_num_seqs} --max-num-batched-tokens {max_num_batched_tokens} \
     --gpu-memory-utilization {gpu_memory_utilization} \
-    --language-model-only --speculative-config '{speculative_config}'
+    --language-model-only --reasoning-parser qwen3 \
+    --enable-auto-tool-choice --tool-call-parser qwen3_xml \
+    --speculative-config '{speculative_config}'
 executor_config:
   auto_remove: false
   restart_policy: unless-stopped

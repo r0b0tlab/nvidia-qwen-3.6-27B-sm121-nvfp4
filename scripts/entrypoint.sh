@@ -1,79 +1,53 @@
 #!/usr/bin/env bash
+# Qwen3.6-27B NVFP4 launch contract for GB10 / SM121.
 set -euo pipefail
 
-# SM121 vLLM v0.24.0 entrypoint for NVFP4 serving
-# Usage:
-#   docker run -v /path/to/model:/models/model:ro -p 8000:8000 <image>
-#   Override with env vars: SERVED_MODEL_NAME, MAX_MODEL_LEN, SPECULATIVE_CONFIG, etc.
+/usr/local/bin/audit_runtime.py
 
-if [[ "${1:-}" == "audit" ]]; then
-  exec /usr/bin/python3 /usr/local/bin/audit_runtime.py
+# Preserve Docker/sparkrun command semantics. In particular, sparkrun passes
+# `bash -c <serve command>` after the image entrypoint.
+if (( $# > 0 )); then
+    exec "$@"
 fi
 
-MODEL_PATH="${MODEL_ID:-/models/model}"
-if [[ ! -e "$MODEL_PATH" ]]; then
-  echo "ERROR: Model path does not exist inside container: $MODEL_PATH" >&2
-  echo "Mount the model with: -v /path/to/model:/models/model:ro" >&2
-  echo "Or set MODEL_ID to an HF repo id and ensure HF_TOKEN is set" >&2
-  exit 2
+MODEL_PATH="${MODEL_PATH:-/models/nvidia-Qwen3.6-27B-NVFP4}"
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-nvidia/Qwen3.6-27B-NVFP4}"
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-32}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
+KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-nvfp4}"
+MTP_TOKENS="${MTP_TOKENS:-2}"
+
+if [[ "$KV_CACHE_DTYPE" == "nvfp4" ]]; then
+    export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASHINFER}"
+    export VLLM_KV_CACHE_LAYOUT="${VLLM_KV_CACHE_LAYOUT:-HND}"
 fi
 
-# Run the SM121 native runtime audit before serving
-/usr/bin/python3 /usr/local/bin/audit_runtime.py
+args=(
+    vllm serve "$MODEL_PATH"
+    --served-model-name "$SERVED_MODEL_NAME"
+    --host "$HOST"
+    --port "$PORT"
+    --tensor-parallel-size 1
+    --dtype bfloat16
+    --kv-cache-dtype "$KV_CACHE_DTYPE"
+    --max-model-len "$MAX_MODEL_LEN"
+    --max-num-seqs "$MAX_NUM_SEQS"
+    --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
+    --enable-prefix-caching
+    --language-model-only
+)
 
-# Build speculative config args if provided
-SPEC_ARGS=()
-if [[ -n "${SPECULATIVE_CONFIG:-}" ]]; then
-  SPEC_ARGS+=(--speculative-config "${SPECULATIVE_CONFIG}")
+if [[ "$MTP_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
+    args+=(
+        --speculative-config
+        "{\"method\":\"qwen3_next_mtp\",\"num_speculative_tokens\":${MTP_TOKENS}}"
+    )
 fi
 
-# v0.24.0 no longer recognizes these env vars; they produce "Unknown vLLM
-# environment variable" warnings at startup. Backend selection is handled
-# by --linear-backend / --moe-backend CLI flags (default: auto).
-unset VLLM_NVFP4_GEMM_BACKEND VLLM_USE_FLASHINFER_MOE_FP4 2>/dev/null || true
-unset VLLM_TEST_FORCE_FP8_MARLIN VLLM_MOE_FORCE_MARLIN 2>/dev/null || true
-
-# Build quantization args: if QUANTIZATION is unset, let vLLM auto-detect
-# from the checkpoint config (blog guidance). If set, use explicit value.
-QUANT_ARGS=()
-if [[ -n "${QUANTIZATION:-}" ]]; then
-  QUANT_ARGS+=(--quantization "$QUANTIZATION")
-fi
-
-# Warmup ping: fire a small request to trigger JIT codegen before the first
-# real user request arrives. See vLLM DGX Spark blog guidance.
-# Must run BEFORE exec replaces the process.
-if [[ -n "${WARMUP_ENABLED:-1}" ]]; then
-  (
-    for i in $(seq 1 60); do
-      if curl -sf "http://127.0.0.1:${PORT:-8000}/v1/models" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 2
-    done
-    curl -sf -X POST "http://127.0.0.1:${PORT:-8000}/v1/chat/completions" \
-      -H 'Content-Type: application/json' \
-      -d '{"model":"'"${SERVED_MODEL_NAME:-model}"'","messages":[{"role":"user","content":"ping"}],"max_tokens":3,"temperature":0}' \
-      >/dev/null 2>&1
-  ) &
-fi
-
-exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
-  --host "${HOST:-0.0.0.0}" \
-  --port "${PORT:-8000}" \
-  --model "$MODEL_PATH" \
-  --served-model-name "${SERVED_MODEL_NAME:-model}" \
-  --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8}" \
-  --attention-backend "${ATTENTION_BACKEND:-flashinfer}" \
-  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.72}" \
-  --max-model-len "${MAX_MODEL_LEN:-8192}" \
-  --max-num-seqs "${MAX_NUM_SEQS:-32}" \
-  --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS:-8192}" \
-  --trust-remote-code \
-  --language-model-only \
-  --enable-auto-tool-choice \
-  --tool-call-parser "${TOOL_CALL_PARSER:-qwen3_coder}" \
-  --reasoning-parser "${REASONING_PARSER:-qwen3}" \
-  "${QUANT_ARGS[@]}" \
-  "${SPEC_ARGS[@]}" \
-  ${EXTRA_ARGS:-}
+printf 'R0B0TLAB_LAUNCH='
+printf '%q ' "${args[@]}"
+printf '\n'
+exec "${args[@]}"

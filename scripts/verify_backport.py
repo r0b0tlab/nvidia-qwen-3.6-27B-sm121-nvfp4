@@ -71,6 +71,8 @@ def validate(root: Path) -> list[str]:
         RELEASE,
         FLASHINFER,
         "cuda-toolkit-13-0",
+        "/usr/bin/python3 -m venv /opt/vllm",
+        "COPY --from=builder /opt/vllm/ /opt/vllm/",
         "MAX_JOBS=6",
         "NVCC_THREADS=2",
         "FLASHINFER_NVCC_THREADS=2",

@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VLLM_USE_PRECOMPILED=0 \
     MAX_JOBS=6 \
     NVCC_THREADS=2
-ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV PATH=/opt/vllm/bin:${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,9 +35,9 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/
     && test "$(readlink -f /usr/local/cuda)" = "/usr/local/cuda-13.0" \
     && nvcc --version | grep -F "release 13.0"
 
-RUN python3 -m pip install --break-system-packages --upgrade \
-        pip setuptools wheel packaging \
-    && python3 -m pip install --break-system-packages \
+RUN /usr/bin/python3 -m venv /opt/vllm \
+    && python3 -m pip install --upgrade pip setuptools wheel packaging \
+    && python3 -m pip install \
         torch==2.11.0 torchvision==0.26.0 torchaudio \
         --index-url https://download.pytorch.org/whl/cu130
 
@@ -50,10 +50,10 @@ WORKDIR /workspace/vllm-src
 # v0.25.1 runtime and build requirements are separate contracts. Torch cu130
 # is installed first so requirements/cuda.txt cannot silently choose another
 # CUDA build.
-RUN python3 -m pip install --break-system-packages \
+RUN python3 -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu130 \
         -r requirements/cuda.txt \
-    && python3 -m pip install --break-system-packages \
+    && python3 -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu130 \
         -r requirements/build/cuda.txt
 
@@ -62,7 +62,7 @@ RUN python3 -m pip install --break-system-packages \
 RUN git clone --filter=blob:none https://github.com/jethac/flashinfer.git /workspace/flashinfer-src \
     && git -C /workspace/flashinfer-src checkout --detach ${FLASHINFER_COMMIT} \
     && test "$(git -C /workspace/flashinfer-src rev-parse HEAD)" = "${FLASHINFER_COMMIT}" \
-    && python3 -m pip install --break-system-packages --no-deps /workspace/flashinfer-src
+    && python3 -m pip install --no-deps /workspace/flashinfer-src
 
 COPY docker/vllm-pr46329-v0.25.1.diff /tmp/vllm-pr46329-v0.25.1.diff
 COPY docker/native-w4a4-qwen27-v0.25.1.diff /tmp/native-w4a4-qwen27-v0.25.1.diff
@@ -72,8 +72,7 @@ RUN git apply --check /tmp/vllm-pr46329-v0.25.1.diff \
     && git apply /tmp/native-w4a4-qwen27-v0.25.1.diff \
     && git diff --check
 
-RUN python3 -m pip install --break-system-packages \
-        --no-build-isolation --no-deps . \
+RUN python3 -m pip install --no-build-isolation --no-deps . \
     && python3 - <<'PY'
 import importlib.metadata as md
 import subprocess
@@ -102,7 +101,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVCC_THREADS=2 \
     FLASHINFER_NVCC_THREADS=2 \
     R0B0TLAB_QWEN27_NATIVE_W4A4=1
-ENV PATH=${CUDA_HOME}/bin:/usr/local/bin:${PATH}
+ENV PATH=/opt/vllm/bin:${CUDA_HOME}/bin:/usr/local/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:/usr/lib/aarch64-linux-gnu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -124,8 +123,7 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/
     && test "$(readlink -f /usr/local/cuda)" = "/usr/local/cuda-13.0" \
     && nvcc --version | grep -F "release 13.0"
 
-COPY --from=builder /usr/local/lib/python3.12/dist-packages/ /usr/local/lib/python3.12/dist-packages/
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /opt/vllm/ /opt/vllm/
 
 LABEL org.opencontainers.image.title="Qwen3.6-27B SM121 NVFP4 vLLM runtime" \
       org.opencontainers.image.description="vLLM v0.25.1 with reviewed SM120/121 NVFP4-KV backport and calibrated native W4A4 reroute" \

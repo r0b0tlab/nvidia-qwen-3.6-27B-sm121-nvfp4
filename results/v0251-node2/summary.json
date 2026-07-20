@@ -9,10 +9,10 @@
     "torch": "2.11.0+cu130",
     "cuda": "13.0",
     "flashinfer": "0.6.13",
-    "source_commit": "4401cbc4720b06e5db3136eaaa18dd431bf6f52e",
-    "local_image_id": "sha256:29c75d7b04295d7875fe5b2a629283fdc69fdf476e658e5e892ac951e82b96f8",
+    "source_commit": "9029216017827ce805c721e5a0a91d91bd5ad62d",
+    "local_image_id": "sha256:7bfde2c8ec5e91148d00637b11fd3ab1fc10ef151231e268535d54cbec2bf356",
     "ghcr_image": "ghcr.io/r0b0tlab/sm121-vllm-nvfp4",
-    "ghcr_digest": "sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0"
+    "ghcr_digest": "sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1"
   },
   "profile": {
     "hardware": "NVIDIA GB10 / SM121",
@@ -185,7 +185,15 @@
     "mtp_drafted_total": 36220.0,
     "mtp_acceptance_total": 0.8346493649917173,
     "kv_tokens": 700142,
-    "kv_memory_gib": 66.56
+    "kv_memory_gib": 66.56,
+    "evidence_image_id": "sha256:29c75d7b04295d7875fe5b2a629283fdc69fdf476e658e5e892ac951e82b96f8"
+  },
+  "release_equivalence": {
+    "status": "PASS",
+    "change": "runtime manifest mode 0600 to 0644 for non-root SparkRun compatibility",
+    "runtime_code_changed": false,
+    "final_image_uid1001_audit": "PASS",
+    "final_image_canary": "PASS"
   },
   "mtp_depth_sweep": {
     "status": "PASS",
@@ -249,5 +257,5 @@
     "production_default": "fp8",
     "reason": "NVFP4 KV has not passed matched semantic and quality gates on SM121"
   },
-  "claim_boundary": "Metrics apply to the exact image digest, model revision, one GB10, FP8 KV, and MTP K=2 profile recorded here."
+  "claim_boundary": "Performance and quality were measured on the equivalent K=2 runtime image recorded in performance.evidence_image_id. The public image changes only runtime-manifest permissions and passed non-root audit plus live SparkRun canaries."
 }

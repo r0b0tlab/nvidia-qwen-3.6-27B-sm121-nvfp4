@@ -25,9 +25,9 @@ NVFP4 KV was **not promoted**. It remains isolated in the experimental Dockerfil
 | PyTorch | `2.11.0+cu130` |
 | CUDA | `13.0` |
 | Target | Linux aarch64, NVIDIA GB10, compute capability 12.1 |
-| Source commit used for image | `4401cbc4720b06e5db3136eaaa18dd431bf6f52e` |
-| Local qualified image ID | `sha256:29c75d7b04295d7875fe5b2a629283fdc69fdf476e658e5e892ac951e82b96f8` |
-| Public immutable image | `ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0` |
+| Source commit used for image | `9029216017827ce805c721e5a0a91d91bd5ad62d` |
+| Local qualified image ID | `sha256:7bfde2c8ec5e91148d00637b11fd3ab1fc10ef151231e268535d54cbec2bf356` |
+| Public immutable image | `ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1` |
 
 ## Prebuilt image
 
@@ -40,19 +40,19 @@ docker pull ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production
 Immutable pull:
 
 ```bash
-docker pull ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0
+docker pull ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1
 ```
 
 Run the fail-closed runtime audit:
 
 ```bash
-docker run --rm --gpus all ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0 audit
+docker run --rm --gpus all ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1 audit
 ```
 
 Serve a local model checkout using the image's qualified defaults:
 
 ```bash
-docker run --rm --gpus all --ipc=host   --name qwen36-27b   -p 8000:8000   -v /path/to/nvidia-Qwen3.6-27B-NVFP4:/models/nvidia-Qwen3.6-27B-NVFP4:ro   ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0
+docker run --rm --gpus all --ipc=host   --name qwen36-27b   -p 8000:8000   -v /path/to/nvidia-Qwen3.6-27B-NVFP4:/models/nvidia-Qwen3.6-27B-NVFP4:ro   ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1
 ```
 
 The default launch resolves to FP8 KV, FlashInfer, MTP K=2, 8K context, reasoning parser `qwen3`, and tool parser `qwen3_xml`.
@@ -60,7 +60,7 @@ The default launch resolves to FP8 KV, FlashInfer, MTP K=2, 8K context, reasonin
 Explicit commands are preserved after the same audit via `exec "$@"`. For example:
 
 ```bash
-docker run --rm --gpus all ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0 vllm --version
+docker run --rm --gpus all ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:0f4ede2569e9f5cbf72ecc47a0cd05d532e3db713a4a5e2b09335db5891b69a1 vllm --version
 ```
 
 The production entrypoint rejects `--kv-cache-dtype nvfp4` before model load.
@@ -79,7 +79,7 @@ Recipe: `sparkrun/recipes/qwen3.6-27b-nvfp4-vllm-r0b0tlab.yaml`.
 
 ## v0.25.1 production results
 
-Measured on one GB10 with the exact immutable image above, model revision `0893e1606ff3d5f97a441f405d5fc541a6bdf404`, FP8 KV, and MTP K=2. Each level used one warmup and three measured repeats with 256 completion tokens per request. All requests succeeded.
+Measured on one GB10 with the equivalent K=2 runtime predecessor recorded in `results/v0251-node2/summary.json`, model revision `0893e1606ff3d5f97a441f405d5fc541a6bdf404`, FP8 KV, and MTP K=2. The public image changes only the runtime-manifest mode from `0600` to `0644` for non-root SparkRun compatibility; it passed a non-root audit and live SparkRun canaries. Each level used one warmup and three measured repeats with 256 completion tokens per request. All requests succeeded.
 
 | Concurrency | Aggregate output tok/s, median | Three-repeat range | TTFT p50 | ITL p50 | MTP acceptance | Mean power |
 |---:|---:|---:|---:|---:|---:|---:|

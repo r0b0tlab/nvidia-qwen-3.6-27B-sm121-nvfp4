@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = ROOT / "scripts" / "entrypoint.sh"
+DOCKERFILE = ROOT / "docker" / "Dockerfile.production"
 RECIPE = ROOT / "sparkrun" / "recipes" / "qwen3.6-27b-nvfp4-vllm-r0b0tlab.yaml"
 
 
@@ -36,6 +37,10 @@ def staged_entrypoint(tmp: Path, audit_exit: int = 0) -> tuple[Path, Path]:
 
 
 class LaunchContractTests(unittest.TestCase):
+    def test_runtime_manifest_is_readable_by_sparkrun_uid(self) -> None:
+        text = DOCKERFILE.read_text()
+        self.assertIn("chmod 0644 /opt/r0b0tlab/runtime-manifest.json", text)
+
     def test_entrypoint_shell_syntax(self) -> None:
         subprocess.run(["bash", "-n", str(ENTRYPOINT)], check=True)
 

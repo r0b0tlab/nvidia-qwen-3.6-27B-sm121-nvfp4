@@ -2,10 +2,9 @@ recipe_version: "2"
 name: qwen3.6-27b-nvfp4-vllm-r0b0tlab
 description: Qwen3.6-27B native NVFP4 weights on one GB10 with production FP8 KV
 model: nvidia/Qwen3.6-27B-NVFP4
-model_revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
 runtime: vllm
 runtime_version: "0.25.1"
-container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4:v0.25.1-production
+container: ghcr.io/r0b0tlab/sm121-vllm-nvfp4@sha256:a5ff6d4bcca5b89ac10ee4525d9cba5ce0c9a17a7007313f10bd2e75c76af6e0
 min_nodes: 1
 max_nodes: 1
 metadata:
@@ -18,6 +17,7 @@ metadata:
 defaults:
   host: 0.0.0.0
   port: 8000
+  model_revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
   tensor_parallel: 1
   max_model_len: 8192
   max_num_seqs: 32
@@ -30,7 +30,7 @@ env:
   R0B0TLAB_NVFP4_KV_ENABLED: "0"
   FLASHINFER_NVCC_THREADS: "2"
 command: |
-  vllm serve {model} --served-model-name {served_model_name} \
+  vllm serve {model} --revision {model_revision} --served-model-name {served_model_name} \
     --host {host} --port {port} -tp {tensor_parallel} --dtype bfloat16 \
     --attention-backend FLASHINFER --kv-cache-dtype fp8 --max-model-len {max_model_len} \
     --max-num-seqs {max_num_seqs} --max-num-batched-tokens {max_num_batched_tokens} \

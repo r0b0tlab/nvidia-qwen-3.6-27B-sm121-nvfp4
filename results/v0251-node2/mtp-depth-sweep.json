@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "selected_k": 2,
+  "rows": [
+    {
+      "mtp_k": 1,
+      "c1_output_tokens_per_second": 20.560497834501355,
+      "c8_output_tokens_per_second": 134.7819628852904,
+      "c32_output_tokens_per_second": 332.9040771089488,
+      "mtp_accepted": 14666.0,
+      "mtp_drafted": 16730.0,
+      "mtp_acceptance": 0.876628810520024,
+      "kv_tokens": 877909
+    },
+    {
+      "mtp_k": 2,
+      "c1_output_tokens_per_second": 27.067182217775827,
+      "c8_output_tokens_per_second": 164.54883681840778,
+      "c32_output_tokens_per_second": 397.402519964027,
+      "mtp_accepted": 19620.0,
+      "mtp_drafted": 23724.0,
+      "mtp_acceptance": 0.8270106221547799,
+      "kv_tokens": 702327
+    },
+    {
+      "mtp_k": 3,
+      "c1_output_tokens_per_second": 30.15566694392942,
+      "c8_output_tokens_per_second": 174.1260667142548,
+      "c32_output_tokens_per_second": 396.8264439146852,
+      "mtp_accepted": 21794.0,
+      "mtp_drafted": 29373.0,
+      "mtp_acceptance": 0.7419739216287067,
+      "kv_tokens": 583452
+    },
+    {
+      "mtp_k": 4,
+      "c1_output_tokens_per_second": 32.19588057065787,
+      "c8_output_tokens_per_second": 165.00809757659707,
+      "c32_output_tokens_per_second": 338.63675340128265,
+      "mtp_accepted": 22790.0,
+      "mtp_drafted": 35116.0,
+      "mtp_acceptance": 0.6489919125185101,
+      "kv_tokens": 490739
+    }
+  ]
+}

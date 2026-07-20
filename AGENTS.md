@@ -5,7 +5,7 @@
 This repository provides a reproducible, source-built **vLLM 0.25.1** runtime for serving
 `nvidia/Qwen3.6-27B-NVFP4` on NVIDIA GB10 / SM121 (DGX Spark).
 
-The production profile uses **native NVFP4 weights, FP8 KV cache, FlashInfer, and Qwen3 MTP K=1**.
+The production profile uses **native NVFP4 weights, FP8 KV cache, FlashInfer, and Qwen3 MTP K=2**.
 The repository also carries the reviewed SM120/121 NVFP4-KV backport for explicit experiments, but
 NVFP4 KV is not a production default because matched quality evidence has not cleared that profile.
 
@@ -20,7 +20,7 @@ NVFP4 KV is not a production default because matched quality evidence has not cl
 - Model revision: `0893e1606ff3d5f97a441f405d5fc541a6bdf404`
 - Quantization: calibrated native `modelopt_mixed` W4A4/W4A16 routing; no Marlin or emulation fallback
 - Production KV cache: FP8
-- Production speculative decoding: `mtp`, one speculative token
+- Production speculative decoding: `mtp`, two speculative tokens
 - Validated production serving envelope: 8,192-token configured context, 32 sequences, 8,192 batched tokens, 0.75 GPU-memory utilization
 - OpenAI chat parsers: `qwen3` reasoning and `qwen3_xml` tool calls
 - Prefix caching: disabled

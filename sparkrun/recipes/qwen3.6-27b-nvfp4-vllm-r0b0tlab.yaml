@@ -24,7 +24,7 @@ defaults:
   max_num_batched_tokens: 8192
   gpu_memory_utilization: 0.75
   served_model_name: nvidia/Qwen3.6-27B-NVFP4
-  speculative_config: '{"method":"mtp","num_speculative_tokens":1}'
+  speculative_config: '{"method":"mtp","num_speculative_tokens":2}'
 env:
   R0B0TLAB_QWEN27_NATIVE_W4A4: "1"
   R0B0TLAB_NVFP4_KV_ENABLED: "0"

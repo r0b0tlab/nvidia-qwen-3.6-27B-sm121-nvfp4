@@ -110,7 +110,7 @@ class LaunchContractTests(unittest.TestCase):
     def test_zero_arg_defaults_are_fail_closed(self) -> None:
         text = ENTRYPOINT.read_text()
         self.assertIn('KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"', text)
-        self.assertIn('MTP_TOKENS="${MTP_TOKENS:-1}"', text)
+        self.assertIn('MTP_TOKENS="${MTP_TOKENS:-2}"', text)
         self.assertIn('MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"', text)
         self.assertIn('MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"', text)
         self.assertIn('GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.75}"', text)
@@ -136,7 +136,7 @@ class LaunchContractTests(unittest.TestCase):
         self.assertIn("max_num_batched_tokens: 8192", text)
         self.assertIn("gpu_memory_utilization: 0.75", text)
         self.assertIn('"method":"mtp"', text)
-        self.assertIn('"num_speculative_tokens":1', text)
+        self.assertIn('"num_speculative_tokens":2', text)
         self.assertIn("--reasoning-parser qwen3", text)
         self.assertIn("--tool-call-parser qwen3_xml", text)
         self.assertIn("--speculative-config '{speculative_config}'", text)
